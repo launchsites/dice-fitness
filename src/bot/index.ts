@@ -167,6 +167,10 @@ export function createBot(): Bot {
       const option = optionForDice(exercise, dice.dice.value);
       await ctx.api.editMessageText(env.gameChatId, resultMessage.message_id, `<b>🎲 ${displayName(currentTarget.displayName).toUpperCase()}</b>\n\n<b>${exercise.name.toUpperCase()} — ${option.measurement === "reps" ? `${option.amount} REPS` : `${option.amount} SECONDS`}</b>`, html)
         .catch((error) => logger.warn({ err: error }, "Could not reveal roll result; assignment will still be stored"));
+      // The native dice is only the reveal animation. Keep the edited result as
+      // the single history entry so the chat returns to the controller quickly.
+      await ctx.api.deleteMessage(env.gameChatId, dice.message_id)
+        .catch((error) => logger.warn({ err: error }, "Could not remove roll animation"));
       await createAssignment({ groupId: env.gameChatId, targetPlayerId: currentTarget.id, operatorPlayerId: operator.id, exerciseKey: exercise.key, measurement: option.measurement, amount: option.amount, diceResult: dice.dice.value });
       await refreshDailyBoard(ctx.api); await refreshLeaderboard(ctx.api); await updateController(ctx, operator.id);
       logger.info({ operator: operator.telegramUserId, target: currentTarget.telegramUserId, exercise: exercise.key, dice: dice.dice.value }, "Exercise assigned");

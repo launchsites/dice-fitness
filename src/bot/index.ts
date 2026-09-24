@@ -25,6 +25,16 @@ async function requirePlayer(ctx: Context) {
 
 async function replaceControllerMessage(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
   if (isGroupController(ctx) && ctx.from && ctx.callbackQuery) {
+    const ephemeralMessageId = ctx.callbackQuery.message?.ephemeral_message_id;
+    // A callback from the public leaderboard creates the first private panel.
+    // Later callbacks originate inside that panel and must edit it directly.
+    if (ephemeralMessageId !== undefined) {
+      await ctx.api.editEphemeralMessageText(env.gameChatId, ctx.from.id, ephemeralMessageId, text, {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
+      return;
+    }
     await ctx.api.sendMessage(env.gameChatId, text, {
       parse_mode: "HTML",
       reply_markup: keyboard,

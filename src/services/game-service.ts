@@ -88,6 +88,19 @@ export async function completeOutstanding(groupId: number, targetPlayerId: numbe
   });
 }
 
+export async function completeNextOutstanding(groupId: number, targetPlayerId: number): Promise<Assignment | undefined> {
+  return db.transaction(async (tx) => {
+    const [next] = await tx.select().from(assignments)
+      .where(and(eq(assignments.groupId, groupId), eq(assignments.targetPlayerId, targetPlayerId), isNull(assignments.completedAt), isNull(assignments.undoneAt)))
+      .orderBy(asc(assignments.assignedAt), asc(assignments.id)).limit(1);
+    if (!next) return undefined;
+    const [batch] = await tx.insert(completionBatches).values({ groupId, targetPlayerId }).returning({ id: completionBatches.id });
+    if (!batch) throw new Error("Completion batch creation failed");
+    await tx.update(assignments).set({ completedAt: now(), completionBatchId: batch.id }).where(eq(assignments.id, next.id));
+    return next as Assignment;
+  });
+}
+
 export async function undoLastByOperator(groupId: number, operatorPlayerId: number): Promise<Assignment | undefined> {
   return db.transaction(async (tx) => {
     const [last] = await tx.select().from(assignments).where(and(eq(assignments.groupId, groupId), eq(assignments.operatorPlayerId, operatorPlayerId), isNull(assignments.undoneAt))).orderBy(desc(assignments.assignedAt), desc(assignments.id)).limit(1);

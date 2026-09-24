@@ -2,7 +2,7 @@ import { Bot, Context, InlineKeyboard } from "grammy";
 import { env } from "../config/env.js";
 import { EXERCISES, optionForDice } from "../config/exercises.js";
 import { logger } from "../logger.js";
-import { addPlayer, bottomControlsMessage, completeOutstanding, createAssignment, deactivatePlayer, ensureGroup, getPlayer, getSelectedTarget, listPlayers, outstandingAssignments, reserveBottomControls, setBottomControlsMessage, setSelectedTarget, undoLastByOperator } from "../services/game-service.js";
+import { addPlayer, bottomControlsMessage, completeNextOutstanding, completeOutstanding, createAssignment, deactivatePlayer, ensureGroup, getPlayer, getSelectedTarget, listPlayers, outstandingAssignments, reserveBottomControls, setBottomControlsMessage, setSelectedTarget, undoLastByOperator } from "../services/game-service.js";
 import { refreshDailyBoard, refreshLeaderboard } from "../services/projection-service.js";
 import { controllerView, owedView, playerPicker } from "../renderers/controller.js";
 import { withUserLock } from "../utils/lock.js";
@@ -127,6 +127,12 @@ async function dismissPrivatePanel(ctx: Context): Promise<void> {
   await ctx.deleteMessage().catch((error) => logger.debug({ err: error }, "Private panel removal skipped"));
 }
 
+function owedKeyboard(hasOutstanding: boolean): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  if (hasOutstanding) keyboard.text("✅ TICK 1 OFF", "complete-next").row();
+  return keyboard.text("✖️ CLOSE", "dismiss-panel");
+}
+
 async function runRoll(ctx: Context, operator: { id: number; telegramUserId: number }) {
   const currentTarget = await getSelectedTarget(env.gameChatId, operator.id);
   if (!currentTarget) return undefined;
@@ -248,7 +254,8 @@ export function createBot(): Bot {
     await deleteActionMessage(ctx);
     const target = await getSelectedTarget(env.gameChatId, operator.id);
     if (!target) { await sendBottomEphemeral(ctx, "Choose a person first.", playerPicker(await listPlayers(env.gameChatId)).keyboard); return; }
-    await sendBottomEphemeral(ctx, owedView(target, await outstandingAssignments(env.gameChatId, target.id)), new InlineKeyboard().text("✖️ CLOSE", "dismiss-panel"));
+    const owed = await outstandingAssignments(env.gameChatId, target.id);
+    await sendBottomEphemeral(ctx, owedView(target, owed), owedKeyboard(owed.length > 0));
   });
 
   bot.hears("↩️ UNDO LAST ROLL", async (ctx) => {
@@ -303,7 +310,15 @@ export function createBot(): Bot {
     if (!target) { await ctx.answerCallbackQuery({ text: "Choose an active player first.", show_alert: true }); return; }
     if (data === "view-owed") {
       const owed = await outstandingAssignments(env.gameChatId, target.id);
-      await ctx.answerCallbackQuery(); await replaceControllerMessage(ctx, owedView(target, owed), new InlineKeyboard().text("✖️ CLOSE", "dismiss-panel")); return;
+      await ctx.answerCallbackQuery(); await replaceControllerMessage(ctx, owedView(target, owed), owedKeyboard(owed.length > 0)); return;
+    }
+    if (data === "complete-next") {
+      const completed = await completeNextOutstanding(env.gameChatId, target.id);
+      await ctx.answerCallbackQuery({ text: completed ? "Top exercise ticked off ✅" : "Nothing left to tick off." });
+      if (completed) { await refreshDailyBoard(ctx.api, completed.gameDate); await refreshLeaderboard(ctx.api); }
+      const owed = await outstandingAssignments(env.gameChatId, target.id);
+      await replaceControllerMessage(ctx, owedView(target, owed), owedKeyboard(owed.length > 0));
+      return;
     }
     if (data === "caught-up") {
       const count = await completeOutstanding(env.gameChatId, target.id);

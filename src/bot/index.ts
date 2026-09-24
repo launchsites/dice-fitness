@@ -10,6 +10,12 @@ import { displayName } from "../utils/text.js";
 
 const html = { parse_mode: "HTML" as const, link_preview_options: { is_disabled: true } };
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+const controllerShortcutKeyboard = {
+  keyboard: [[{ text: "/controller" }]],
+  resize_keyboard: true,
+  is_persistent: true,
+  input_field_placeholder: "Dice Fitness controls",
+};
 
 function isGameGroup(ctx: Context): boolean { return ctx.chat?.id === env.gameChatId; }
 function isGroupController(ctx: Context): boolean { return isGameGroup(ctx) && ctx.chat?.type !== "private"; }
@@ -229,6 +235,17 @@ export async function initialiseGame(bot: Bot): Promise<void> {
     ], { scope: { type: "chat", chat_id: env.gameChatId } });
   } catch (error) {
     logger.error({ err: error, chatId: env.gameChatId }, "Could not configure private controller command");
+  }
+  try {
+    // Reply keyboards are Telegram's persistent controls above the input field.
+    // The setup message can disappear immediately; the keyboard remains available.
+    const shortcut = await bot.api.sendMessage(env.gameChatId, "🎲 Dice Fitness controls ready.", {
+      disable_notification: true,
+      reply_markup: controllerShortcutKeyboard,
+    });
+    await bot.api.deleteMessage(env.gameChatId, shortcut.message_id);
+  } catch (error) {
+    logger.error({ err: error, chatId: env.gameChatId }, "Could not configure bottom controller shortcut");
   }
   try {
     await refreshLeaderboard(bot.api, true);

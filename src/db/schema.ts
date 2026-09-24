@@ -24,7 +24,7 @@ export const assignments = pgTable("assignments", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
   targetPlayerId: integer("target_player_id").notNull().references(() => players.id), operatorPlayerId: integer("operator_player_id").notNull().references(() => players.id),
   exerciseKey: text("exercise_key").notNull(), measurement: text("measurement", { enum: ["reps", "seconds"] }).notNull(), amount: integer("amount").notNull(), diceResult: integer("dice_result").notNull(),
-  gameDate: date("game_date").notNull(), assignedAt: createdAt, completedAt: timestamp("completed_at", { withTimezone: true }), completionBatchId: integer("completion_batch_id").references(() => completionBatches.id), undoneAt: timestamp("undone_at", { withTimezone: true }), undoneByPlayerId: integer("undone_by_player_id").references(() => players.id),
+  gameDate: date("game_date").notNull(), assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(), completedAt: timestamp("completed_at", { withTimezone: true }), completionBatchId: integer("completion_batch_id").references(() => completionBatches.id), undoneAt: timestamp("undone_at", { withTimezone: true }), undoneByPlayerId: integer("undone_by_player_id").references(() => players.id),
 });
 export const dailyBoards = pgTable("daily_boards", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id), gameDate: date("game_date").notNull(), telegramMessageId: integer("telegram_message_id"), createdAt,

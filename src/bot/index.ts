@@ -33,8 +33,12 @@ export function createBot(): Bot {
   bot.catch((error) => logger.error({ err: error.error, updateId: error.ctx.update.update_id }, "Telegram update failed"));
 
   bot.command("start", async (ctx) => {
+    if (ctx.chat?.type !== "private") {
+      if (!isGameGroup(ctx)) logger.info({ chatId: ctx.chat?.id, chatType: ctx.chat?.type }, "Received /start in unconfigured chat");
+      return;
+    }
     const player = await requirePlayer(ctx);
-    if (!player) { if (ctx.chat?.type === "private") await ctx.reply("This controller is for registered game players. Ask a group admin to add you first."); return; }
+    if (!player) { await ctx.reply("This controller is for registered game players. Ask a group admin to add you first."); return; }
     let target = await getSelectedTarget(env.gameChatId, player.id);
     if (!target) {
       const candidates = await listPlayers(env.gameChatId);

@@ -20,7 +20,7 @@ export function controllerView(target: Player | undefined, owed: Assignment[]): 
 export function playerPicker(players: Player[]): { text: string; keyboard: InlineKeyboard } {
   const keyboard = new InlineKeyboard();
   players.forEach((player, index) => { keyboard.text(player.displayName.slice(0, 30), `target:${player.id}`); if (index % 2 === 1) keyboard.row(); });
-  keyboard.row().text("✖️ CANCEL", "controller");
+  keyboard.row().text("✖️ CANCEL", "dismiss-picker");
   return { text: "<b>👤 CHOOSE PERSON</b>\n\nWho is the next exercise for?", keyboard };
 }
 

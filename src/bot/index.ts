@@ -10,8 +10,12 @@ import { displayName } from "../utils/text.js";
 
 const html = { parse_mode: "HTML" as const, link_preview_options: { is_disabled: true } };
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-const controllerShortcutKeyboard = {
-  keyboard: [[{ text: "/controller" }]],
+const bottomActionKeyboard = {
+  keyboard: [
+    [{ text: "🎲 ROLL" }, { text: "👤 CHANGE PERSON" }],
+    [{ text: "✅ MARK AS DONE" }, { text: "📋 VIEW OWED" }],
+    [{ text: "↩️ UNDO LAST ROLL" }],
+  ],
   resize_keyboard: true,
   is_persistent: true,
   input_field_placeholder: "Dice Fitness controls",
@@ -91,6 +95,59 @@ async function sendControllerForEphemeralCommand(ctx: Context, operatorId: numbe
   });
 }
 
+async function ensureActionPlayer(ctx: Context) {
+  if (!ctx.from || !isGameGroup(ctx) || ctx.from.is_bot) return undefined;
+  let player = await requirePlayer(ctx);
+  const joined = !player;
+  if (!player) player = await addPlayer(env.gameChatId, ctx.from);
+  if (joined) await refreshLeaderboard(ctx.api);
+  return player;
+}
+
+async function deleteActionMessage(ctx: Context): Promise<void> {
+  await ctx.deleteMessage().catch((error) => logger.warn({ err: error }, "Could not remove bottom keyboard action"));
+}
+
+async function sendBottomEphemeral(ctx: Context, text: string, keyboard?: InlineKeyboard): Promise<void> {
+  if (!ctx.from || !isGameGroup(ctx)) return;
+  await ctx.api.sendMessage(env.gameChatId, text, {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+    ephemeral_message_parameters: { receiver_user_id: ctx.from.id },
+  });
+}
+
+async function dismissPrivatePanel(ctx: Context): Promise<void> {
+  if (!ctx.from || !isGameGroup(ctx) || !ctx.callbackQuery) return;
+  const ephemeralMessageId = ctx.callbackQuery.message?.ephemeral_message_id;
+  if (ephemeralMessageId !== undefined) {
+    await ctx.api.deleteEphemeralMessage(env.gameChatId, ctx.from.id, ephemeralMessageId);
+    return;
+  }
+  await ctx.deleteMessage().catch((error) => logger.debug({ err: error }, "Private panel removal skipped"));
+}
+
+async function runRoll(ctx: Context, operator: { id: number; telegramUserId: number }) {
+  const currentTarget = await getSelectedTarget(env.gameChatId, operator.id);
+  if (!currentTarget) return undefined;
+  const exercise = EXERCISES[Math.floor(Math.random() * EXERCISES.length)]!;
+  const resultMessage = await ctx.api.sendMessage(env.gameChatId, `<b>🎲 ${displayName(currentTarget.displayName).toUpperCase()}</b>\n\n<b>${exercise.name.toUpperCase()}</b>\n\nRolling amount...`, html);
+  const dice = await ctx.api.sendDice(env.gameChatId, "🎲");
+  await wait(5_000);
+  const option = optionForDice(exercise, dice.dice.value);
+  await ctx.api.editMessageText(env.gameChatId, resultMessage.message_id, `<b>🎲 ${displayName(currentTarget.displayName).toUpperCase()}</b>\n\n<b>${exercise.name.toUpperCase()} — ${option.measurement === "reps" ? `${option.amount} REPS` : `${option.amount} SECONDS`}</b>`, html)
+    .catch((error) => logger.warn({ err: error }, "Could not reveal roll result; assignment will still be stored"));
+  await ctx.api.deleteMessage(env.gameChatId, dice.message_id)
+    .catch((error) => logger.warn({ err: error }, "Could not remove roll animation"));
+  await createAssignment({ groupId: env.gameChatId, targetPlayerId: currentTarget.id, operatorPlayerId: operator.id, exerciseKey: exercise.key, measurement: option.measurement, amount: option.amount, diceResult: dice.dice.value });
+  await refreshDailyBoard(ctx.api); await refreshLeaderboard(ctx.api);
+  await wait(2_000);
+  await ctx.api.deleteMessage(env.gameChatId, resultMessage.message_id)
+    .catch((error) => logger.warn({ err: error }, "Could not remove roll result"));
+  logger.info({ operator: operator.telegramUserId, target: currentTarget.telegramUserId, exercise: exercise.key, dice: dice.dice.value }, "Exercise assigned");
+  return currentTarget;
+}
+
 export function createBot(): Bot {
   const bot = new Bot(env.botToken);
   bot.catch((error) => logger.error({ err: error.error, updateId: error.ctx.update.update_id }, "Telegram update failed"));
@@ -151,6 +208,58 @@ export function createBot(): Bot {
     await ctx.reply("✅ Messages refreshed from the database.");
   });
 
+  bot.hears("👤 CHANGE PERSON", async (ctx) => {
+    const operator = await ensureActionPlayer(ctx);
+    if (!operator) return;
+    await deleteActionMessage(ctx);
+    const view = playerPicker(await listPlayers(env.gameChatId));
+    await sendBottomEphemeral(ctx, view.text, view.keyboard);
+  });
+
+  bot.hears("🎲 ROLL", async (ctx) => {
+    const operator = await ensureActionPlayer(ctx);
+    if (!operator) return;
+    await deleteActionMessage(ctx);
+    const result = await withUserLock(operator.telegramUserId, () => runRoll(ctx, operator));
+    if (result === undefined) {
+      const target = await getSelectedTarget(env.gameChatId, operator.id);
+      if (target) await sendBottomEphemeral(ctx, "A roll is already in progress.");
+      else {
+        const view = playerPicker(await listPlayers(env.gameChatId));
+        await sendBottomEphemeral(ctx, "Choose a person before rolling.", view.keyboard);
+      }
+    }
+  });
+
+  bot.hears("✅ MARK AS DONE", async (ctx) => {
+    const operator = await ensureActionPlayer(ctx);
+    if (!operator) return;
+    await deleteActionMessage(ctx);
+    const target = await getSelectedTarget(env.gameChatId, operator.id);
+    if (!target) { await sendBottomEphemeral(ctx, "Choose a person first.", playerPicker(await listPlayers(env.gameChatId)).keyboard); return; }
+    const count = await completeOutstanding(env.gameChatId, target.id);
+    if (count) { await refreshDailyBoard(ctx.api); await refreshLeaderboard(ctx.api); }
+    await sendBottomEphemeral(ctx, count ? `✅ <b>${displayName(target.displayName)}</b> is caught up.` : `✅ <b>${displayName(target.displayName)}</b> is already caught up.`);
+  });
+
+  bot.hears("📋 VIEW OWED", async (ctx) => {
+    const operator = await ensureActionPlayer(ctx);
+    if (!operator) return;
+    await deleteActionMessage(ctx);
+    const target = await getSelectedTarget(env.gameChatId, operator.id);
+    if (!target) { await sendBottomEphemeral(ctx, "Choose a person first.", playerPicker(await listPlayers(env.gameChatId)).keyboard); return; }
+    await sendBottomEphemeral(ctx, owedView(target, await outstandingAssignments(env.gameChatId, target.id)), new InlineKeyboard().text("✖️ CLOSE", "dismiss-panel"));
+  });
+
+  bot.hears("↩️ UNDO LAST ROLL", async (ctx) => {
+    const operator = await ensureActionPlayer(ctx);
+    if (!operator) return;
+    await deleteActionMessage(ctx);
+    const undone = await undoLastByOperator(env.gameChatId, operator.id);
+    if (undone) { await refreshDailyBoard(ctx.api, undone.gameDate); await refreshLeaderboard(ctx.api); }
+    await sendBottomEphemeral(ctx, undone ? "↩️ Last roll undone." : "You have no active rolls to undo.");
+  });
+
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
     let operator = await requirePlayer(ctx);
@@ -164,8 +273,13 @@ export function createBot(): Bot {
     if (!operator) {
       if (isGroupController(ctx)) {
         await ctx.answerCallbackQuery();
-        await replaceControllerMessage(ctx, "<b>🎲 EXERCISE DICE</b>\n\nTap <b>JOIN / OPEN MY CONTROLLER</b> on the leaderboard to join the game.", new InlineKeyboard());
+        await replaceControllerMessage(ctx, "<b>🎲 EXERCISE DICE</b>\n\nUse the persistent controls above the message field to join the game.", new InlineKeyboard());
       } else await ctx.answerCallbackQuery({ text: "You are not an active player.", show_alert: true });
+      return;
+    }
+    if (data === "dismiss-picker" || data === "dismiss-panel") {
+      await ctx.answerCallbackQuery({ text: data === "dismiss-picker" ? "Cancelled." : "Closed." });
+      await dismissPrivatePanel(ctx);
       return;
     }
     if (data === "open-controller" || data === "controller") { await ctx.answerCallbackQuery(); await updateController(ctx, operator.id); return; }
@@ -176,7 +290,12 @@ export function createBot(): Bot {
     if (data.startsWith("target:")) {
       const targetId = Number(data.slice(7));
       if (!Number.isSafeInteger(targetId)) { await ctx.answerCallbackQuery({ text: "Invalid selection.", show_alert: true }); return; }
-      try { await setSelectedTarget(env.gameChatId, operator.id, targetId); await ctx.answerCallbackQuery(); await updateController(ctx, operator.id); }
+      try {
+        const target = (await listPlayers(env.gameChatId)).find((player) => player.id === targetId);
+        await setSelectedTarget(env.gameChatId, operator.id, targetId);
+        await ctx.answerCallbackQuery({ text: target ? `Now rolling for ${target.displayName}.` : "Person selected." });
+        await dismissPrivatePanel(ctx);
+      }
       catch { await ctx.answerCallbackQuery({ text: "That player is no longer active.", show_alert: true }); }
       return;
     }
@@ -184,7 +303,7 @@ export function createBot(): Bot {
     if (!target) { await ctx.answerCallbackQuery({ text: "Choose an active player first.", show_alert: true }); return; }
     if (data === "view-owed") {
       const owed = await outstandingAssignments(env.gameChatId, target.id);
-      await ctx.answerCallbackQuery(); await replaceControllerMessage(ctx, owedView(target, owed), new InlineKeyboard().text("↩️ BACK", "controller")); return;
+      await ctx.answerCallbackQuery(); await replaceControllerMessage(ctx, owedView(target, owed), new InlineKeyboard().text("✖️ CLOSE", "dismiss-panel")); return;
     }
     if (data === "caught-up") {
       const count = await completeOutstanding(env.gameChatId, target.id);
@@ -199,30 +318,13 @@ export function createBot(): Bot {
       await updateController(ctx, operator.id); return;
     }
     if (data !== "roll") { await ctx.answerCallbackQuery({ text: "That button has expired.", show_alert: true }); return; }
-    const result = await withUserLock(operator.telegramUserId, async () => {
-      const currentTarget = await getSelectedTarget(env.gameChatId, operator.id);
-      if (!currentTarget) { await ctx.answerCallbackQuery({ text: "Choose an active player first.", show_alert: true }); return; }
-      await ctx.answerCallbackQuery({ text: "Rolling…" });
-      const exercise = EXERCISES[Math.floor(Math.random() * EXERCISES.length)]!;
-      const resultMessage = await ctx.api.sendMessage(env.gameChatId, `<b>🎲 ${displayName(currentTarget.displayName).toUpperCase()}</b>\n\n<b>${exercise.name.toUpperCase()}</b>\n\nRolling amount...`, html);
-      const dice = await ctx.api.sendDice(env.gameChatId, "🎲");
-      await wait(5_000);
-      const option = optionForDice(exercise, dice.dice.value);
-      await ctx.api.editMessageText(env.gameChatId, resultMessage.message_id, `<b>🎲 ${displayName(currentTarget.displayName).toUpperCase()}</b>\n\n<b>${exercise.name.toUpperCase()} — ${option.measurement === "reps" ? `${option.amount} REPS` : `${option.amount} SECONDS`}</b>`, html)
-        .catch((error) => logger.warn({ err: error }, "Could not reveal roll result; assignment will still be stored"));
-      // The dice and result are only a reveal animation; the daily board is the
-      // persistent record that remains in the chat.
-      await ctx.api.deleteMessage(env.gameChatId, dice.message_id)
-        .catch((error) => logger.warn({ err: error }, "Could not remove roll animation"));
-      await createAssignment({ groupId: env.gameChatId, targetPlayerId: currentTarget.id, operatorPlayerId: operator.id, exerciseKey: exercise.key, measurement: option.measurement, amount: option.amount, diceResult: dice.dice.value });
-      await refreshDailyBoard(ctx.api); await refreshLeaderboard(ctx.api);
-      await wait(2_000);
-      await ctx.api.deleteMessage(env.gameChatId, resultMessage.message_id)
-        .catch((error) => logger.warn({ err: error }, "Could not remove roll result"));
-      await updateController(ctx, operator.id);
-      logger.info({ operator: operator.telegramUserId, target: currentTarget.telegramUserId, exercise: exercise.key, dice: dice.dice.value }, "Exercise assigned");
-    });
-    if (result === undefined) await ctx.answerCallbackQuery({ text: "A roll is already in progress.", show_alert: false }).catch(() => undefined);
+    if (!await getSelectedTarget(env.gameChatId, operator.id)) {
+      await ctx.answerCallbackQuery({ text: "Choose an active player first.", show_alert: true });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: "Rolling…" });
+    const result = await withUserLock(operator.telegramUserId, () => runRoll(ctx, operator));
+    if (result) await dismissPrivatePanel(ctx);
   });
   return bot;
 }
@@ -241,7 +343,7 @@ export async function initialiseGame(bot: Bot): Promise<void> {
     // The setup message can disappear immediately; the keyboard remains available.
     const shortcut = await bot.api.sendMessage(env.gameChatId, "🎲 Dice Fitness controls ready.", {
       disable_notification: true,
-      reply_markup: controllerShortcutKeyboard,
+      reply_markup: bottomActionKeyboard,
     });
     await bot.api.deleteMessage(env.gameChatId, shortcut.message_id);
   } catch (error) {

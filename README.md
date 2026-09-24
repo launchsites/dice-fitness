@@ -28,7 +28,7 @@ A private Telegram group game: choose a player in your own private-in-the-group 
    docker compose logs -f bot
    ```
 
-6. In the group, each player opens Telegram's bot command picker beside the message field and chooses **Open my private game controller**. The private `/controller` command registers them on first use and opens their controller; no DM or administrator action is required. An administrator can still use `/addplayer` by replying to someone as an optional fallback.
+6. The bot installs persistent controls above the group message field: **ROLL**, **CHANGE PERSON**, **MARK AS DONE**, **VIEW OWED**, and **UNDO LAST ROLL**. A player's first tap registers them; the temporary tap message is deleted and any picker or status detail is private to that player. An administrator can still use `/addplayer` by replying to someone as an optional fallback.
 
 ## Game flow
 
@@ -38,7 +38,7 @@ Use **VIEW OWED** to see every outstanding event in order. **IS CAUGHT UP** mark
 
 ## Group commands
 
-- `/controller` — private, one-tap controller in Telegram's bot command picker; also registers a new player.
+- `/controller` — private fallback controller command.
 - `/addplayer` — administrator-only fallback; reply to a person's message.
 - `/removeplayer` — administrator only; reply to a player's message. Keeps history, makes them inactive.
 - `/players` — list active players.

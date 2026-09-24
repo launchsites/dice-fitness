@@ -136,5 +136,10 @@ export function createBot(): Bot {
 
 export async function initialiseGame(bot: Bot): Promise<void> {
   await ensureGroup(env.gameChatId);
-  await refreshLeaderboard(bot.api, true);
+  try {
+    await refreshLeaderboard(bot.api, true);
+  } catch (error) {
+    // Keep long polling available to recover once the bot is added to the configured group.
+    logger.error({ err: error, chatId: env.gameChatId }, "Could not initialise group projections");
+  }
 }

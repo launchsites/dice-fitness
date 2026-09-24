@@ -12,7 +12,7 @@ const leaderboardOptions = {
   ...options,
   // Tapping this in the group creates a Telegram Ephemeral Message for just
   // that player; the shared leaderboard itself remains unchanged for everyone else.
-  reply_markup: new InlineKeyboard().text("🎲 OPEN MY CONTROLLER", "open-controller"),
+  reply_markup: new InlineKeyboard().text("🎲 JOIN / OPEN MY CONTROLLER", "open-controller"),
 };
 const missingMessage = (error: unknown): boolean => String(error).includes("message to edit not found") || String(error).includes("message can't be edited");
 

@@ -80,7 +80,7 @@ export function createBot(): Bot {
     const user = ctx.message?.reply_to_message?.from;
     if (!user || user.is_bot) { await ctx.reply("Reply to a person's message with /addplayer."); return; }
     const player = await addPlayer(env.gameChatId, user);
-    await ctx.reply(`✅ ${displayName(player.displayName)} is now an active player. They can tap <b>OPEN MY CONTROLLER</b> on the leaderboard.`, html);
+    await ctx.reply(`✅ ${displayName(player.displayName)} is now an active player. They can tap <b>JOIN / OPEN MY CONTROLLER</b> on the leaderboard.`, html);
     await refreshLeaderboard(ctx.api, true);
   });
 
@@ -109,15 +109,22 @@ export function createBot(): Bot {
   });
 
   bot.on("callback_query:data", async (ctx) => {
-    const operator = await requirePlayer(ctx);
+    const data = ctx.callbackQuery.data;
+    let operator = await requirePlayer(ctx);
+    if (!operator && data === "open-controller" && isGroupController(ctx) && ctx.from && !ctx.from.is_bot) {
+      operator = await addPlayer(env.gameChatId, ctx.from);
+      await ctx.answerCallbackQuery({ text: "You joined the game ✅" });
+      await refreshLeaderboard(ctx.api);
+      await updateController(ctx, operator.id);
+      return;
+    }
     if (!operator) {
       if (isGroupController(ctx)) {
         await ctx.answerCallbackQuery();
-        await replaceControllerMessage(ctx, "<b>🎲 EXERCISE DICE</b>\n\nYou are not an active player yet. Ask a group administrator to reply to one of your messages with <code>/addplayer</code>.", new InlineKeyboard());
+        await replaceControllerMessage(ctx, "<b>🎲 EXERCISE DICE</b>\n\nTap <b>JOIN / OPEN MY CONTROLLER</b> on the leaderboard to join the game.", new InlineKeyboard());
       } else await ctx.answerCallbackQuery({ text: "You are not an active player.", show_alert: true });
       return;
     }
-    const data = ctx.callbackQuery.data;
     if (data === "open-controller" || data === "controller") { await ctx.answerCallbackQuery(); await updateController(ctx, operator.id); return; }
     if (data === "choose") {
       const view = playerPicker(await listPlayers(env.gameChatId));

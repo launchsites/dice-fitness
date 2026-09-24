@@ -1,4 +1,4 @@
-import type { Api } from "grammy";
+import { InlineKeyboard, type Api } from "grammy";
 import { env } from "../config/env.js";
 import { gameDate } from "../utils/time.js";
 import { logger } from "../logger.js";
@@ -8,6 +8,12 @@ import { leaderboardView } from "../renderers/leaderboard.js";
 import { singleFlight } from "../utils/single-flight.js";
 
 const options = { parse_mode: "HTML" as const, link_preview_options: { is_disabled: true } };
+const leaderboardOptions = {
+  ...options,
+  // Tapping this in the group creates a Telegram Ephemeral Message for just
+  // that player; the shared leaderboard itself remains unchanged for everyone else.
+  reply_markup: new InlineKeyboard().text("🎲 OPEN MY CONTROLLER", "open-controller"),
+};
 const missingMessage = (error: unknown): boolean => String(error).includes("message to edit not found") || String(error).includes("message can't be edited");
 
 export async function refreshDailyBoard(api: Api, date = gameDate()): Promise<void> {
@@ -39,14 +45,14 @@ export async function refreshLeaderboard(api: Api, pinNew = false): Promise<void
     const text = leaderboardView(players, completed, outstanding);
     const messageId = await leaderboardMessage(groupId);
     try {
-      if (messageId) await api.editMessageText(groupId, messageId, text, options);
+      if (messageId) await api.editMessageText(groupId, messageId, text, leaderboardOptions);
       else {
-        const sent = await api.sendMessage(groupId, text, options); await setLeaderboardMessage(groupId, sent.message_id);
+        const sent = await api.sendMessage(groupId, text, leaderboardOptions); await setLeaderboardMessage(groupId, sent.message_id);
         if (pinNew) await api.pinChatMessage(groupId, sent.message_id, { disable_notification: true }).catch((error) => logger.info({ err: error }, "Could not pin leaderboard"));
       }
     } catch (error) {
       if (!missingMessage(error)) throw error;
-      const sent = await api.sendMessage(groupId, text, options); await setLeaderboardMessage(groupId, sent.message_id);
+      const sent = await api.sendMessage(groupId, text, leaderboardOptions); await setLeaderboardMessage(groupId, sent.message_id);
     }
   });
 }

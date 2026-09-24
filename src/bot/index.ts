@@ -12,20 +12,49 @@ const html = { parse_mode: "HTML" as const, link_preview_options: { is_disabled:
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 function isGameGroup(ctx: Context): boolean { return ctx.chat?.id === env.gameChatId; }
+function isGroupController(ctx: Context): boolean { return isGameGroup(ctx) && ctx.chat?.type !== "private"; }
 async function isAdmin(ctx: Context): Promise<boolean> {
   if (!ctx.from || !isGameGroup(ctx)) return false;
   const member = await ctx.api.getChatMember(env.gameChatId, ctx.from.id);
   return member.status === "administrator" || member.status === "creator";
 }
 async function requirePlayer(ctx: Context) {
-  if (!ctx.from || ctx.chat?.type !== "private") return undefined;
+  if (!ctx.from || (ctx.chat?.type !== "private" && !isGameGroup(ctx))) return undefined;
   return getPlayer(env.gameChatId, ctx.from.id);
 }
+
+async function replaceControllerMessage(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
+  if (isGroupController(ctx) && ctx.from && ctx.callbackQuery) {
+    await ctx.api.sendMessage(env.gameChatId, text, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+      ephemeral_message_parameters: {
+        receiver_user_id: ctx.from.id,
+        callback_query_id: ctx.callbackQuery.id,
+        replace_callback_query_message: true,
+      },
+    });
+    return;
+  }
+  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard })
+    .catch((error) => logger.debug({ err: error }, "Controller edit skipped"));
+}
+
+async function selectedTarget(operatorId: number) {
+  let target = await getSelectedTarget(env.gameChatId, operatorId);
+  if (target) return target;
+  const candidates = await listPlayers(env.gameChatId);
+  const first = candidates.find((candidate) => candidate.id !== operatorId) ?? candidates[0];
+  if (!first) return undefined;
+  await setSelectedTarget(env.gameChatId, operatorId, first.id);
+  target = first;
+  return target;
+}
 async function updateController(ctx: Context, operatorId: number): Promise<void> {
-  const target = await getSelectedTarget(env.gameChatId, operatorId);
+  const target = await selectedTarget(operatorId);
   const owed = target ? await outstandingAssignments(env.gameChatId, target.id) : [];
   const view = controllerView(target, owed);
-  await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: view.keyboard }).catch((error) => logger.debug({ err: error }, "Controller edit skipped"));
+  await replaceControllerMessage(ctx, view.text, view.keyboard);
 }
 
 export function createBot(): Bot {
@@ -34,17 +63,13 @@ export function createBot(): Bot {
 
   bot.command("start", async (ctx) => {
     if (ctx.chat?.type !== "private") {
-      if (!isGameGroup(ctx)) logger.info({ chatId: ctx.chat?.id, chatType: ctx.chat?.type }, "Received /start in unconfigured chat");
+      if (isGameGroup(ctx)) { await refreshLeaderboard(ctx.api); return; }
+      logger.info({ chatId: ctx.chat?.id, chatType: ctx.chat?.type }, "Received /start in unconfigured chat");
       return;
     }
     const player = await requirePlayer(ctx);
     if (!player) { await ctx.reply("This controller is for registered game players. Ask a group admin to add you first."); return; }
-    let target = await getSelectedTarget(env.gameChatId, player.id);
-    if (!target) {
-      const candidates = await listPlayers(env.gameChatId);
-      const first = candidates.find((candidate) => candidate.id !== player.id) ?? candidates[0];
-      if (first) { await setSelectedTarget(env.gameChatId, player.id, first.id); target = first; }
-    }
+    const target = await selectedTarget(player.id);
     const view = controllerView(target, target ? await outstandingAssignments(env.gameChatId, target.id) : []);
     await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
   });
@@ -55,7 +80,7 @@ export function createBot(): Bot {
     const user = ctx.message?.reply_to_message?.from;
     if (!user || user.is_bot) { await ctx.reply("Reply to a person's message with /addplayer."); return; }
     const player = await addPlayer(env.gameChatId, user);
-    await ctx.reply(`✅ ${displayName(player.displayName)} is now an active player. They can open a private controller with /start.`, html);
+    await ctx.reply(`✅ ${displayName(player.displayName)} is now an active player. They can tap <b>OPEN MY CONTROLLER</b> on the leaderboard.`, html);
     await refreshLeaderboard(ctx.api, true);
   });
 
@@ -85,12 +110,18 @@ export function createBot(): Bot {
 
   bot.on("callback_query:data", async (ctx) => {
     const operator = await requirePlayer(ctx);
-    if (!operator) { await ctx.answerCallbackQuery({ text: "You are not an active player.", show_alert: true }); return; }
+    if (!operator) {
+      if (isGroupController(ctx)) {
+        await ctx.answerCallbackQuery();
+        await replaceControllerMessage(ctx, "<b>🎲 EXERCISE DICE</b>\n\nYou are not an active player yet. Ask a group administrator to reply to one of your messages with <code>/addplayer</code>.", new InlineKeyboard());
+      } else await ctx.answerCallbackQuery({ text: "You are not an active player.", show_alert: true });
+      return;
+    }
     const data = ctx.callbackQuery.data;
-    if (data === "controller") { await ctx.answerCallbackQuery(); await updateController(ctx, operator.id); return; }
+    if (data === "open-controller" || data === "controller") { await ctx.answerCallbackQuery(); await updateController(ctx, operator.id); return; }
     if (data === "choose") {
       const view = playerPicker(await listPlayers(env.gameChatId));
-      await ctx.answerCallbackQuery(); await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: view.keyboard }); return;
+      await ctx.answerCallbackQuery(); await replaceControllerMessage(ctx, view.text, view.keyboard); return;
     }
     if (data.startsWith("target:")) {
       const targetId = Number(data.slice(7));
@@ -103,7 +134,7 @@ export function createBot(): Bot {
     if (!target) { await ctx.answerCallbackQuery({ text: "Choose an active player first.", show_alert: true }); return; }
     if (data === "view-owed") {
       const owed = await outstandingAssignments(env.gameChatId, target.id);
-      await ctx.answerCallbackQuery(); await ctx.editMessageText(owedView(target, owed), { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("↩️ BACK", "controller") }); return;
+      await ctx.answerCallbackQuery(); await replaceControllerMessage(ctx, owedView(target, owed), new InlineKeyboard().text("↩️ BACK", "controller")); return;
     }
     if (data === "caught-up") {
       const count = await completeOutstanding(env.gameChatId, target.id);

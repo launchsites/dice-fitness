@@ -121,3 +121,11 @@ export async function reserveLeaderboard(groupId: number): Promise<void> { await
 export async function setLeaderboardMessage(groupId: number, telegramMessageId: number): Promise<void> {
   await db.update(botMessages).set({ telegramMessageId, updatedAt: now() }).where(and(eq(botMessages.groupId, groupId), eq(botMessages.key, "leaderboard")));
 }
+export async function bottomControlsMessage(groupId: number): Promise<number | null> {
+  const [row] = await db.select({ telegramMessageId: botMessages.telegramMessageId }).from(botMessages).where(and(eq(botMessages.groupId, groupId), eq(botMessages.key, "bottom_controls")));
+  return row?.telegramMessageId ?? null;
+}
+export async function reserveBottomControls(groupId: number): Promise<void> { await db.insert(botMessages).values({ groupId, key: "bottom_controls" }).onConflictDoNothing(); }
+export async function setBottomControlsMessage(groupId: number, telegramMessageId: number): Promise<void> {
+  await db.update(botMessages).set({ telegramMessageId, updatedAt: now() }).where(and(eq(botMessages.groupId, groupId), eq(botMessages.key, "bottom_controls")));
+}

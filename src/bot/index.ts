@@ -2,7 +2,7 @@ import { Bot, Context, InlineKeyboard } from "grammy";
 import { env } from "../config/env.js";
 import { EXERCISES, optionForDice } from "../config/exercises.js";
 import { logger } from "../logger.js";
-import { addPlayer, completeOutstanding, createAssignment, deactivatePlayer, ensureGroup, getPlayer, getSelectedTarget, listPlayers, outstandingAssignments, setSelectedTarget, undoLastByOperator } from "../services/game-service.js";
+import { addPlayer, bottomControlsMessage, completeOutstanding, createAssignment, deactivatePlayer, ensureGroup, getPlayer, getSelectedTarget, listPlayers, outstandingAssignments, reserveBottomControls, setBottomControlsMessage, setSelectedTarget, undoLastByOperator } from "../services/game-service.js";
 import { refreshDailyBoard, refreshLeaderboard } from "../services/projection-service.js";
 import { controllerView, owedView, playerPicker } from "../renderers/controller.js";
 import { withUserLock } from "../utils/lock.js";
@@ -339,13 +339,17 @@ export async function initialiseGame(bot: Bot): Promise<void> {
     logger.error({ err: error, chatId: env.gameChatId }, "Could not configure private controller command");
   }
   try {
-    // Reply keyboards are Telegram's persistent controls above the input field.
-    // The setup message can disappear immediately; the keyboard remains available.
-    const shortcut = await bot.api.sendMessage(env.gameChatId, "🎲 Dice Fitness controls ready.", {
-      disable_notification: true,
-      reply_markup: bottomActionKeyboard,
-    });
-    await bot.api.deleteMessage(env.gameChatId, shortcut.message_id);
+    // Telegram restores an older keyboard if its source message is deleted, so
+    // retain one small, unpinned message as the durable source of these controls.
+    await reserveBottomControls(env.gameChatId);
+    if (!await bottomControlsMessage(env.gameChatId)) {
+      const shortcut = await bot.api.sendMessage(env.gameChatId, "<b>🎲 DICE FITNESS</b>\n\nControls are always available below.", {
+        disable_notification: true,
+        parse_mode: "HTML",
+        reply_markup: bottomActionKeyboard,
+      });
+      await setBottomControlsMessage(env.gameChatId, shortcut.message_id);
+    }
   } catch (error) {
     logger.error({ err: error, chatId: env.gameChatId }, "Could not configure bottom controller shortcut");
   }

@@ -28,7 +28,7 @@ A private Telegram group game: choose a player in your own private-in-the-group 
    docker compose logs -f bot
    ```
 
-6. Each player taps **JOIN / OPEN MY CONTROLLER** on the leaderboard once. That registers them and opens a controller visible only to the person who tapped it; no DM or administrator action is required. An administrator can still use `/addplayer` by replying to someone as an optional fallback.
+6. In the group, each player opens Telegram's bot command picker beside the message field and chooses **Open my private game controller**. The private `/controller` command registers them on first use and opens their controller; no DM or administrator action is required. An administrator can still use `/addplayer` by replying to someone as an optional fallback.
 
 ## Game flow
 
@@ -38,7 +38,8 @@ Use **VIEW OWED** to see every outstanding event in order. **IS CAUGHT UP** mark
 
 ## Group commands
 
-- `/addplayer` — administrator-only fallback; reply to a person's message. Normal registration is the leaderboard's **JOIN / OPEN MY CONTROLLER** button.
+- `/controller` — private, one-tap controller in Telegram's bot command picker; also registers a new player.
+- `/addplayer` — administrator-only fallback; reply to a person's message.
 - `/removeplayer` — administrator only; reply to a player's message. Keeps history, makes them inactive.
 - `/players` — list active players.
 - `/refresh` — administrator only; reconstructs leaderboard and current daily board from PostgreSQL.

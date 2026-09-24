@@ -67,6 +67,24 @@ async function updateController(ctx: Context, operatorId: number): Promise<void>
   await replaceControllerMessage(ctx, view.text, view.keyboard);
 }
 
+async function sendControllerForEphemeralCommand(ctx: Context, operatorId: number): Promise<void> {
+  if (!ctx.from || !isGameGroup(ctx)) return;
+  const ephemeralMessageId = ctx.message?.ephemeral_message_id;
+  if (ephemeralMessageId === undefined) {
+    await ctx.reply("Open this from Telegram's bot command menu to keep it private.");
+    return;
+  }
+  const target = await selectedTarget(operatorId);
+  const owed = target ? await outstandingAssignments(env.gameChatId, target.id) : [];
+  const view = controllerView(target, owed);
+  await ctx.api.sendMessage(env.gameChatId, view.text, {
+    parse_mode: "HTML",
+    reply_markup: view.keyboard,
+    ephemeral_message_parameters: { receiver_user_id: ctx.from.id },
+    reply_parameters: { ephemeral_message_id: ephemeralMessageId },
+  });
+}
+
 export function createBot(): Bot {
   const bot = new Bot(env.botToken);
   bot.catch((error) => logger.error({ err: error.error, updateId: error.ctx.update.update_id }, "Telegram update failed"));
@@ -84,13 +102,22 @@ export function createBot(): Bot {
     await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
   });
 
+  bot.command("controller", async (ctx) => {
+    if (!isGameGroup(ctx) || !ctx.from || ctx.from.is_bot) return;
+    let player = await requirePlayer(ctx);
+    const joined = !player;
+    if (!player) player = await addPlayer(env.gameChatId, ctx.from);
+    await sendControllerForEphemeralCommand(ctx, player.id);
+    if (joined) await refreshLeaderboard(ctx.api);
+  });
+
   bot.command("addplayer", async (ctx) => {
     if (!isGameGroup(ctx)) return;
     if (!await isAdmin(ctx)) { await ctx.reply("Only group administrators can add players."); return; }
     const user = ctx.message?.reply_to_message?.from;
     if (!user || user.is_bot) { await ctx.reply("Reply to a person's message with /addplayer."); return; }
     const player = await addPlayer(env.gameChatId, user);
-    await ctx.reply(`✅ ${displayName(player.displayName)} is now an active player. They can tap <b>JOIN / OPEN MY CONTROLLER</b> on the leaderboard.`, html);
+    await ctx.reply(`✅ ${displayName(player.displayName)} is now an active player. They can use the private <code>/controller</code> command from Telegram's bot menu.`, html);
     await refreshLeaderboard(ctx.api, true);
   });
 
@@ -196,6 +223,13 @@ export function createBot(): Bot {
 
 export async function initialiseGame(bot: Bot): Promise<void> {
   await ensureGroup(env.gameChatId);
+  try {
+    await bot.api.setMyCommands([
+      { command: "controller", description: "Open my private game controller", is_ephemeral: true },
+    ], { scope: { type: "chat", chat_id: env.gameChatId } });
+  } catch (error) {
+    logger.error({ err: error, chatId: env.gameChatId }, "Could not configure private controller command");
+  }
   try {
     await refreshLeaderboard(bot.api, true);
   } catch (error) {

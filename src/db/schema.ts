@@ -1,15 +1,17 @@
 import { bigint, boolean, date, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const createdAt = timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+const joinedAt = timestamp("joined_at", { withTimezone: true }).notNull().defaultNow();
+const completedAt = timestamp("completed_at", { withTimezone: true }).notNull().defaultNow();
 
 export const groups = pgTable("groups", { id: bigint("id", { mode: "number" }).primaryKey(), createdAt });
 export const players = pgTable("players", {
   id: serial("id").primaryKey(), telegramUserId: bigint("telegram_user_id", { mode: "number" }).notNull().unique(),
-  displayName: text("display_name").notNull(), username: text("username"), joinedAt: createdAt,
+  displayName: text("display_name").notNull(), username: text("username"), joinedAt,
 });
 export const groupPlayers = pgTable("group_players", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
-  playerId: integer("player_id").notNull().references(() => players.id), active: boolean("active").notNull().default(true), joinedAt: createdAt,
+  playerId: integer("player_id").notNull().references(() => players.id), active: boolean("active").notNull().default(true), joinedAt,
 }, (table) => [uniqueIndex("group_players_group_player_unique").on(table.groupId, table.playerId)]);
 export const operatorPreferences = pgTable("operator_preferences", {
   groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
@@ -18,7 +20,7 @@ export const operatorPreferences = pgTable("operator_preferences", {
 }, (table) => [uniqueIndex("operator_preferences_unique").on(table.groupId, table.operatorPlayerId)]);
 export const completionBatches = pgTable("completion_batches", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
-  targetPlayerId: integer("target_player_id").notNull().references(() => players.id), completedAt: createdAt,
+  targetPlayerId: integer("target_player_id").notNull().references(() => players.id), completedAt,
 });
 export const assignments = pgTable("assignments", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),

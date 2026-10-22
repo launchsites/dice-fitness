@@ -110,6 +110,7 @@ function render() {
     } else dice = new Dice(stage, labels, !!exercise);
     diceSignature = signature;
     if (result) dice.show(result.diceResult - 1, amount(result));
+    dice.setInspectable(!busy && !result && !modal);
   } else { dice?.dispose(); dice = undefined; diceSignature = ""; }
   if (modal) {
     const inputs = [...document.querySelectorAll<HTMLInputElement>("dialog input")];

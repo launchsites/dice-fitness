@@ -55,6 +55,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .saved-check svg { width: 19px; height: 19px; }
 .dice-stage { position: relative; flex: 1; width: 100%; min-height: 0; max-height: 390px; }
 .dice-stage canvas { display: block; max-width: 100%; }
+.dice-stage:focus-visible { outline: 1px solid var(--blue); outline-offset: -8px; border-radius: 16px; }
+.dice-canvas.inspectable { touch-action: none; cursor: grab; }
+.dice-canvas.dragging { cursor: grabbing; }
 .dice-canvas { animation: dice-enter .32s cubic-bezier(.2,.8,.2,1); }
 @keyframes dice-enter { from { opacity: 0; transform: scale(.88); } to { opacity: 1; transform: scale(1); } }
 .primary { width: 100%; min-height: 54px; border-radius: 12px; padding: 14px 20px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 17px; line-height: 24px; font-weight: 600; text-decoration: none; color: white; background: #3390ec; }

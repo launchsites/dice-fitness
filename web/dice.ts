@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { DiceInspection, DiceQuality } from "./dice-controls.js";
 
 type Rolling = { start: number; duration: number; initial: THREE.Quaternion; target: THREE.Quaternion; resolve(): void };
 
@@ -22,13 +23,24 @@ export class Dice {
   private surface?: THREE.MeshPhysicalMaterial;
   private floor?: THREE.Mesh;
   private noise?: THREE.CanvasTexture;
+  private labelMaterials = new Map<string, THREE.MeshBasicMaterial>();
+  private inspection = new DiceInspection();
+  private inspectable = false;
+  private pointerX = 0;
+  private pointerY = 0;
+  private idleAnchorY = 0;
+  private previousFrame = 0;
+  private warmUntil = performance.now() + 2500;
+  private quality = new DiceQuality(devicePixelRatio || 1, (() => {
+    const hints = navigator as Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+    return !!hints.connection?.saveData || (hints.deviceMemory !== undefined && hints.deviceMemory <= 2);
+  })());
   private reduced = matchMedia("(prefers-reduced-motion: reduce)");
-  private visibility = () => { if (!document.hidden) this.start(); };
+  private visibility = () => { this.previousFrame = 0; if (!document.hidden) this.start(); };
 
   constructor(private container: HTMLElement, labels: string[], private isCube = false) {
     try {
       this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "low-power" });
-      this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
       this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = 1.15;
@@ -65,6 +77,12 @@ export class Dice {
       this.scene.add(floor);
       this.observer = new ResizeObserver(() => this.resize());
       this.mount(container);
+      const canvas = this.renderer.domElement;
+      canvas.addEventListener("pointerdown", this.pointerDown);
+      canvas.addEventListener("pointermove", this.pointerMove);
+      canvas.addEventListener("pointerup", this.pointerEnd);
+      canvas.addEventListener("pointercancel", this.pointerEnd);
+      canvas.addEventListener("lostpointercapture", this.pointerEnd);
       document.addEventListener("visibilitychange", this.visibility);
       this.start();
     } catch {
@@ -77,13 +95,16 @@ export class Dice {
 
   mount(container: HTMLElement) {
     const fallback = this.container.querySelector(".dice-fallback");
+    this.container.removeEventListener("keydown", this.keyInspect);
     this.container = container;
+    container.addEventListener("keydown", this.keyInspect);
     if (this.renderer) container.appendChild(this.renderer.domElement);
     else if (fallback) container.appendChild(fallback);
     this.observer?.disconnect(); this.observer?.observe(container); this.resize();
   }
 
   update(container: HTMLElement, labels: string[], isCube: boolean) {
+    this.cancelPointer(); this.inspection.reset(); this.idleAnchorY = 0; this.warmUntil = performance.now() + 1000;
     this.mount(container);
     this.isCube = isCube;
     if (!this.renderer) {
@@ -94,10 +115,9 @@ export class Dice {
     this.die.traverse((object) => {
       const mesh = object as THREE.Mesh;
       mesh.geometry?.dispose();
-      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) if (material && material !== this.surface) {
-        (material as THREE.MeshBasicMaterial).map?.dispose(); material.dispose();
-      }
     });
+    for (const material of this.labelMaterials.values()) { material.map?.dispose(); material.dispose(); }
+    this.labelMaterials.clear();
     this.die.clear(); this.normals = []; this.ups = [];
     if (isCube) this.cube(labels); else this.icosahedron(labels);
     this.rest.copy(this.orientation(isCube ? 4 : 0)); this.die.quaternion.copy(this.rest); this.die.position.set(0, 0, 0);
@@ -120,8 +140,11 @@ export class Dice {
   }
 
   private label(label: string, triangle: boolean, index: number) {
-    const canvas = document.createElement("canvas"); canvas.width = canvas.height = 512;
+    const key = triangle ? label : `${label}:${index}`;
+    const cached = this.labelMaterials.get(key); if (cached) return cached;
+    const canvas = document.createElement("canvas"); canvas.width = canvas.height = this.quality.labelSize(this.renderer!.capabilities.maxTextureSize);
     const ctx = canvas.getContext("2d")!;
+    ctx.scale(canvas.width / 512, canvas.height / 512);
     ctx.fillStyle = "#14202b"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     if (!triangle) {
       const [value, unit] = label.endsWith("s") && !label.endsWith("reps") ? [label.slice(0, -1), "sec"] : label.split(" ");
@@ -143,8 +166,9 @@ export class Dice {
       lines.forEach((text, i) => ctx.fillText(text, 256, 324 + (i - (lines.length - 1) / 2) * 54, 292));
     }
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = Math.min(8, this.renderer!.capabilities.getMaxAnisotropy());
-    return new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    texture.anisotropy = Math.min(16, this.renderer!.capabilities.getMaxAnisotropy());
+    const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2 });
+    this.labelMaterials.set(key, material); return material;
   }
 
   private cube(labels: string[]) {
@@ -191,6 +215,7 @@ export class Dice {
   }
 
   show(face: number, label: string) {
+    this.inspection.reset(); this.idleAnchorY = 0;
     if (this.renderer) { this.rest.copy(this.orientation(face)); this.die.quaternion.copy(this.rest); this.draw(); }
     else { const fallback = this.container.querySelector(".dice-fallback"); if (fallback) fallback.textContent = label; }
   }
@@ -202,7 +227,64 @@ export class Dice {
     this.camera.aspect = width / height;
     const distance = 1.95 / (Math.tan(THREE.MathUtils.degToRad(18)) * Math.min(1, this.camera.aspect));
     this.camera.position.set(0, 0.7, distance); this.camera.lookAt(0, 0, 0); this.camera.updateProjectionMatrix();
+    this.quality.nativeRatio = devicePixelRatio || 1;
+    const ratio = this.quality.pixelRatio(width, height, this.renderer.capabilities.maxTextureSize);
+    if (Math.abs(this.renderer.getPixelRatio() - ratio) > .01) this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(width, height); this.draw();
+  }
+
+  setInspectable(enabled: boolean) {
+    this.inspectable = enabled && !!this.renderer;
+    this.renderer?.domElement.classList.toggle("inspectable", this.inspectable);
+    if (this.inspectable) {
+      this.container.tabIndex = 0;
+      this.container.setAttribute("aria-description", "Drag or use arrow keys to inspect the dice. This does not roll.");
+    } else {
+      this.cancelPointer(); this.inspection.reset();
+      this.container.removeAttribute("tabindex"); this.container.removeAttribute("aria-description");
+    }
+  }
+
+  private cancelPointer() {
+    const id = this.inspection.pointer;
+    this.inspection.pointer = null;
+    const canvas = this.renderer?.domElement;
+    if (id !== null && canvas?.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    canvas?.classList.remove("dragging");
+  }
+
+  private pointerDown = (event: PointerEvent) => {
+    if (!this.inspectable || this.rolling || !event.isPrimary || event.button !== 0 || this.inspection.pointer !== null) return;
+    event.preventDefault();
+    this.rest.copy(this.die.quaternion); this.idleAnchorY = this.die.position.y;
+    this.inspection.begin(event.pointerId, performance.now()); this.pointerX = event.clientX; this.pointerY = event.clientY;
+    this.renderer!.domElement.setPointerCapture(event.pointerId);
+    this.renderer!.domElement.classList.add("dragging"); this.start();
+  };
+
+  private pointerMove = (event: PointerEvent) => {
+    if (!this.inspectable || this.rolling || event.pointerId !== this.inspection.pointer) return;
+    event.preventDefault();
+    const rect = this.container.getBoundingClientRect();
+    const scale = Math.PI * 1.4 / Math.max(100, Math.min(rect.width, rect.height));
+    this.rotate((event.clientX - this.pointerX) * scale, (event.clientY - this.pointerY) * scale);
+    this.pointerX = event.clientX; this.pointerY = event.clientY;
+  };
+
+  private pointerEnd = (event: PointerEvent) => {
+    if (event.pointerId !== this.inspection.pointer) return;
+    this.cancelPointer(); this.inspection.end(performance.now()); this.start();
+  };
+
+  private keyInspect = (event: KeyboardEvent) => {
+    if (!this.inspectable || this.rolling || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault(); this.idleAnchorY = this.die.position.y;
+    this.rotate(event.key === "ArrowLeft" ? -.18 : event.key === "ArrowRight" ? .18 : 0, event.key === "ArrowUp" ? -.18 : event.key === "ArrowDown" ? .18 : 0);
+  };
+
+  private rotate(x: number, y: number) {
+    this.die.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(y, x, 0))).normalize();
+    this.rest.copy(this.die.quaternion); this.inspection.touch(performance.now()); this.draw(); this.start();
   }
 
   private draw() { this.renderer?.render(this.scene, this.camera); }
@@ -224,14 +306,19 @@ export class Dice {
       }
       if (p === 1) { this.rest.copy(rolling.target); this.die.position.set(0, 0, 0); this.rolling = undefined; rolling.resolve(); }
     } else if (!this.reduced.matches) {
-      this.die.position.y = Math.sin(time * 0.0012) * 0.045;
-      this.die.quaternion.copy(this.rest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(time * .0006) * .025, Math.sin(time * .0007) * .04, 0)));
+      const idle = this.inspection.idleBlend(time);
+      this.die.position.y = this.idleAnchorY * (1 - idle) + Math.sin(time * 0.0012) * 0.045 * idle;
+      this.die.quaternion.copy(this.rest).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.sin(time * .0006) * .025 * idle, Math.sin(time * .0007) * .04 * idle, 0)));
     }
+    const started = performance.now();
     this.draw();
+    if (time > this.warmUntil && this.previousFrame && this.quality.observe(time - this.previousFrame, performance.now() - started)) this.resize();
+    this.previousFrame = time;
     if (this.rolling || !this.reduced.matches) this.start();
   };
 
   async roll(face: number, label: string): Promise<void> {
+    this.setInspectable(false);
     if (!this.renderer) {
       const fallback = this.container.querySelector<HTMLElement>(".dice-fallback");
       if (fallback) { fallback.classList.add("rolling"); await new Promise((resolve) => setTimeout(resolve, this.reduced.matches ? 0 : 700)); fallback.classList.remove("rolling"); fallback.textContent = label; }
@@ -244,6 +331,11 @@ export class Dice {
   }
 
   private release() {
+    this.cancelPointer(); this.container.removeEventListener("keydown", this.keyInspect);
+    const canvas = this.renderer?.domElement;
+    canvas?.removeEventListener("pointerdown", this.pointerDown);
+    canvas?.removeEventListener("pointermove", this.pointerMove);
+    for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) canvas?.removeEventListener(event, this.pointerEnd as EventListener);
     cancelAnimationFrame(this.frame); this.frame = 0; this.observer?.disconnect();
     document.removeEventListener("visibilitychange", this.visibility);
     const materials = new Set<THREE.Material>();
@@ -254,6 +346,7 @@ export class Dice {
       if (object instanceof THREE.Light && "shadow" in object) (object as THREE.DirectionalLight).shadow?.dispose();
     });
     for (const material of materials) { (material as THREE.MeshBasicMaterial).map?.dispose(); material.dispose(); }
+    this.labelMaterials.clear();
     this.noise?.dispose(); this.environment?.dispose(); this.renderer?.dispose(); this.renderer?.forceContextLoss(); this.renderer = undefined;
     this.rolling?.resolve(); this.rolling = undefined;
   }

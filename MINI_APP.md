@@ -12,6 +12,10 @@ An unfinished roll resumes after reload; its activity and player stay locked unt
 
 Dice use Three.js rounded/chamfered geometry, physical white materials, a subtle procedural surface texture, room reflections and feathered contact shadows. Motion eases through a tumble, bounce and settle; reduced-motion users receive a short transition. Ordinary busy states retain the renderer rather than resetting it, and animation pauses while the app is hidden.
 
+Before either roll, drag the dice (or focus it and use arrow keys) to inspect its faces. This changes only presentation: it creates no game requests and cannot choose an outcome. Manual input pauses idle motion; after release and two seconds without input, idle movement eases back in from the inspected orientation. Inspection locks during requests/rolling and on the saved result. Reduced-motion mode still permits direct inspection without automatic movement.
+
+Rendering targets the display's native density, up to 4x within a 1.8-million-pixel budget. Retina face textures are 1024px with anisotropic filtering, and duplicate activity labels share materials. Devices advertising low memory or data-saving mode use a smaller budget, 2x cap and 512px textures. After warm-up, sustained slow frames reduce the resolution ceiling; isolated stalls do not. These are conservative runtime limits, not a guarantee of device-specific performance.
+
 Layout adds device safe-area and Telegram content-safe-area insets. It observes safe-area, fullscreen and viewport events, including late native updates, and preserves browser notch-inset fallbacks. Headers, controls and sheets remain below Telegram chrome. The stable viewport height keeps the roll action and navigation on-screen.
 
 ## Telegram and hosting setup
@@ -21,6 +25,8 @@ Layout adds device safe-area and Telegram content-safe-area insets. It observes 
 3. Set `MINI_APP_ENABLED=true` and deploy. Startup creates a replacement leaderboard that removes the old reply keyboard and attaches the app launcher. It removes only tracked obsolete bot leaderboard, control and daily-board messages, where Telegram permits deletion. Exercise records are untouched.
 
 Leave `MINI_APP_ENABLED=false` until BotFather is configured. This keeps existing group controls operational while the website is deployed. With `MINI_APP_URL` set, `/start` in a private bot chat also offers a proper authenticated Mini App button.
+
+Mini App mode removes the group command menu, including inherited default/group/admin lists and English overrides. Private-chat `/start` remains advertised; manual administrator recovery/setup handlers remain available without appearing as group menu commands. Telegram clients may need the group reopened to refresh cached suggestions.
 
 New environment settings:
 

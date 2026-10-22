@@ -7,6 +7,7 @@ import { logger } from "../logger.js";
 import { addPlayer, completedAssignments, deactivatePlayer, ensureGroup, leaderboardMessage, listPlayers, outstandingAssignments, reserveLeaderboard, setLeaderboardMessage } from "../services/game-service.js";
 import { miniAppLink, refreshLeaderboard } from "../services/projection-service.js";
 import { leaderboardView } from "../renderers/leaderboard.js";
+import { configureMiniAppCommands } from "./commands.js";
 
 async function admin(ctx: Context) {
   if (!ctx.from || ctx.chat?.id !== env.gameChatId) return false;
@@ -45,7 +46,7 @@ export async function initialiseMiniApp(bot: Bot): Promise<void> {
   if (!env.miniAppUrl || !env.miniAppUrl.startsWith("https://")) throw new Error("MINI_APP_URL must be HTTPS when the Mini App is enabled");
   await ensureGroup(env.gameChatId);
   await bot.api.setChatMenuButton({ menu_button: { type: "web_app", text: "Dice rolls", web_app: { url: env.miniAppUrl } } });
-  await bot.api.setMyCommands([{ command: "rolls", description: "Open Dice Fitness" }, { command: "leaderboard", description: "Refresh the leaderboard" }], { scope: { type: "chat", chat_id: env.gameChatId } });
+  await configureMiniAppCommands(bot.api, env.gameChatId);
   const [marker] = await db.select().from(botMessages).where(and(eq(botMessages.groupId, env.gameChatId), eq(botMessages.key, "mini_app_layout_v1")));
   if (!marker?.telegramMessageId) {
     // A single replacement leaderboard also removes Telegram's old reply keyboard.

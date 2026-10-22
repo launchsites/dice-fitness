@@ -351,7 +351,16 @@ export function createBot(): Bot {
 }
 
 export async function initialiseGame(bot: Bot): Promise<void> {
-  if (env.miniAppEnabled) { await initialiseMiniApp(bot); return; }
+  if (env.miniAppEnabled) {
+    try { await initialiseMiniApp(bot); }
+    catch (error) {
+      // Telegram setup is a recoverable projection operation, not a reason to
+      // take the authenticated app and long polling offline.
+      logger.error({ error: String(error) }, "Mini App setup failed; retrying in 30 seconds");
+      setTimeout(() => { void initialiseGame(bot); }, 30_000).unref();
+    }
+    return;
+  }
   await ensureGroup(env.gameChatId);
   try {
     await bot.api.setMyCommands([

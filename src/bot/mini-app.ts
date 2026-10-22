@@ -55,14 +55,16 @@ export async function initialiseMiniApp(bot: Bot): Promise<void> {
     const owed = new Map<number, number>();
     for (const player of players) owed.set(player.id, (await outstandingAssignments(env.gameChatId, player.id)).length);
     const text = leaderboardView(players, await completedAssignments(env.gameChatId), owed);
-    const sent = await bot.api.sendMessage(env.gameChatId, text, { parse_mode: "HTML", disable_notification: true, reply_markup: { remove_keyboard: true } });
+    const keyboardRemoval = await bot.api.sendMessage(env.gameChatId, "Dice Fitness controls are now in the Mini App.", { disable_notification: true, reply_markup: { remove_keyboard: true } });
+    // Telegram cannot edit a message sent with ReplyKeyboardRemove. Create the
+    // durable projection with its inline keyboard present from the beginning.
+    const sent = await bot.api.sendMessage(env.gameChatId, text, { parse_mode: "HTML", disable_notification: true, reply_markup: new InlineKeyboard().url("🎲 Open dice rolls", miniAppLink()) });
     await reserveLeaderboard(env.gameChatId); await setLeaderboardMessage(env.gameChatId, sent.message_id);
-    await bot.api.editMessageReplyMarkup(env.gameChatId, sent.message_id, { reply_markup: new InlineKeyboard().url("🎲 Open dice rolls", miniAppLink()) });
     await db.insert(botMessages).values({ groupId: env.gameChatId, key: "mini_app_layout_v1", telegramMessageId: sent.message_id }).onConflictDoUpdate({ target: [botMessages.groupId, botMessages.key], set: { telegramMessageId: sent.message_id } });
     await bot.api.pinChatMessage(env.gameChatId, sent.message_id, { disable_notification: true }).catch(() => {});
     const controls = await db.select().from(botMessages).where(and(eq(botMessages.groupId, env.gameChatId), eq(botMessages.key, "bottom_controls")));
     const boards = await db.select().from(dailyBoards).where(eq(dailyBoards.groupId, env.gameChatId));
-    const obsoleteIds = new Set([oldLeaderboard, ...controls.map((row) => row.telegramMessageId), ...boards.map((row) => row.telegramMessageId)]);
+    const obsoleteIds = new Set([keyboardRemoval.message_id, oldLeaderboard, ...controls.map((row) => row.telegramMessageId), ...boards.map((row) => row.telegramMessageId)]);
     for (const messageId of obsoleteIds) if (messageId && messageId !== sent.message_id) {
       await bot.api.deleteMessage(env.gameChatId, messageId).catch((error) => logger.info({ messageId, error: String(error) }, "Older bot projection could not be removed"));
     }

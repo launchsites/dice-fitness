@@ -25,13 +25,10 @@ try {
     if (!source) throw new Error("Source group does not exist");
     if (!target) throw new Error("Target group does not exist");
 
-    const stateChecks = await Promise.all([
-      tx.select({ total: count() }).from(assignments).where(eq(assignments.groupId, targetGroupId)),
-      tx.select({ total: count() }).from(completionBatches).where(eq(completionBatches.groupId, targetGroupId)),
-      tx.select({ total: count() }).from(operatorPreferences).where(eq(operatorPreferences.groupId, targetGroupId)),
-    ]);
-    const targetStateRows = stateChecks.flat().reduce((total, row) => total + Number(row.total), 0);
-    if (targetStateRows > 0) throw new Error("Target group already has game state; refusing to merge automatically");
+    const [targetAssignmentState] = await tx.select({ total: count() }).from(assignments).where(eq(assignments.groupId, targetGroupId));
+    if (Number(targetAssignmentState?.total ?? 0) > 0) {
+      throw new Error("Target group already has assignments; refusing to merge automatically");
+    }
 
     const sourcePlayers = await tx.select({ playerId: groupPlayers.playerId }).from(groupPlayers).where(eq(groupPlayers.groupId, sourceGroupId));
     const targetPlayers = await tx.select({ playerId: groupPlayers.playerId }).from(groupPlayers).where(eq(groupPlayers.groupId, targetGroupId));
@@ -45,6 +42,8 @@ try {
     await tx.delete(dailyBoards).where(eq(dailyBoards.groupId, sourceGroupId));
     await tx.delete(botMessages).where(eq(botMessages.groupId, sourceGroupId));
     await tx.delete(groupPlayers).where(eq(groupPlayers.groupId, targetGroupId));
+    await tx.delete(completionBatches).where(eq(completionBatches.groupId, targetGroupId));
+    await tx.delete(operatorPreferences).where(eq(operatorPreferences.groupId, targetGroupId));
     await tx.update(assignments).set({ groupId: targetGroupId }).where(eq(assignments.groupId, sourceGroupId));
     await tx.update(completionBatches).set({ groupId: targetGroupId }).where(eq(completionBatches.groupId, sourceGroupId));
     await tx.update(operatorPreferences).set({ groupId: targetGroupId }).where(eq(operatorPreferences.groupId, sourceGroupId));

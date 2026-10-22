@@ -102,6 +102,21 @@ export async function completeAppAssignments(targetId: number, expectedIds: numb
   });
 }
 
+/** Any active group member can dismiss an owed roll, without changing completed scores. */
+export async function dismissAppAssignment(operator: Player, expectedId: number) {
+  return db.transaction(async (tx) => {
+    await operatorLock(tx, operator.id);
+    const [original] = await tx.select().from(assignments).where(and(eq(assignments.id, expectedId), eq(assignments.groupId, groupId)));
+    if (!original) throw new AppError(404, "Roll not found.");
+    await targetLock(tx, original.targetPlayerId);
+    const [current] = await tx.select().from(assignments).where(eq(assignments.id, original.id));
+    if (current!.undoneAt) return current!;
+    if (current!.completedAt) throw new AppError(409, "This exercise is already complete. Refresh the owed list.");
+    const [dismissed] = await tx.update(assignments).set({ undoneAt: new Date(), undoneByPlayerId: operator.id }).where(eq(assignments.id, expectedId)).returning();
+    return dismissed!;
+  });
+}
+
 export async function undoAppAssignment(operator: Player, expectedId: number) {
   return db.transaction(async (tx) => {
     await operatorLock(tx, operator.id);

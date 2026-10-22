@@ -7,7 +7,7 @@ import { logger } from "../logger.js";
 import { verifyInitData } from "./auth.js";
 import { AppError } from "./errors.js";
 import { addPlayer, getPlayer, type Player } from "../services/game-service.js";
-import { appState, beginRoll, completeAppAssignments, finishRoll, undoAppAssignment } from "../services/app-service.js";
+import { appState, beginRoll, completeAppAssignments, dismissAppAssignment, finishRoll, undoAppAssignment } from "../services/app-service.js";
 import { refreshLeaderboard } from "../services/projection-service.js";
 
 const root = resolve("web-dist");
@@ -94,6 +94,11 @@ export function createAppServer(bot: Bot) {
           if (!positiveInt(data.targetPlayerId) || !Array.isArray(ids) || ids.length < 1 || ids.length > 1000 || !ids.every(positiveInt) || typeof data.nextOnly !== "boolean" || (data.nextOnly && ids.length !== 1)) throw new AppError(400, "Invalid completion request.");
           const completed = await completeAppAssignments(data.targetPlayerId, ids as number[], data.nextOnly);
           await project(); json(res, 200, { completed }); return;
+        }
+        if (pathname === "/api/dismiss") {
+          if (!positiveInt(data.assignmentId)) throw new AppError(400, "Choose a valid roll.");
+          const assignment = await dismissAppAssignment(operator, data.assignmentId);
+          await project(); json(res, 200, { assignment }); return;
         }
         if (pathname === "/api/undo") {
           if (!positiveInt(data.assignmentId)) throw new AppError(400, "Choose a valid roll.");

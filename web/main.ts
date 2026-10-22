@@ -1,10 +1,12 @@
 import "./style.css";
 import { Dice } from "./dice.js";
+import { observeViewport } from "./viewport.js";
 import type { Assignment, Roll, State } from "./types.js";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const telegram = window.Telegram?.WebApp;
 const preview = new URLSearchParams(location.search).get("demo") === "1";
+observeViewport(telegram);
 let state: State;
 let tab: "roll" | "owed" = "roll";
 let targetId = Number(sessionStorage.getItem("dice-target")) || 0;
@@ -15,22 +17,25 @@ let requestId: string | null = sessionStorage.getItem("dice-request");
 let busy = false;
 let error = "";
 let notice = "";
-let modal = false;
+let modal: "injury" | "dismiss" | null = null;
+let dismissedId = 0;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 let dice: Dice | undefined;
+let diceSignature = "";
 
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
 const amount = (value: { amount: number; measurement: string }) => value.measurement === "reps" ? `${value.amount} reps` : `${value.amount}s`;
 const exerciseOf = (key: string) => state.exercises.find((exercise) => exercise.key === key)!;
 const eligible = (chosen = filters) => state.exercises.filter((exercise) => !state.injuries.some((filter) => chosen.includes(filter.key) && (filter.excludes as readonly string[]).includes(exercise.key)));
 const haptic = (style = "light") => telegram?.HapticFeedback?.impactOccurred(style);
-const icon = (name: "dice" | "owed" | "check" | "chevron" | "close" | "refresh") => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${{
+const icon = (name: "dice" | "owed" | "check" | "chevron" | "close" | "refresh" | "undo") => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${{
   dice: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01" stroke-width="3"/>',
   owed: '<path d="m4 7 1.5 1.5L8 6m-4 9 1.5 1.5L8 14M12 7h8m-8 8h8"/>',
   check: '<path d="m6 12 4 4 8-8"/>',
   chevron: '<path d="m8 10 4 4 4-4"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/>',
+  undo: '<path d="M4 4v6h6"/><path d="M4 10a8 8 0 1 1 2.1 7.9"/>',
 }[name]}</svg>`;
 
 async function api<T>(path: string, body?: Record<string, unknown>): Promise<T> {
@@ -74,7 +79,13 @@ function rollView() {
 
 function owedView() {
   const players = state.players.filter((player) => player.active || player.owed.length);
-  return `<section class="owed-page" aria-label="Owed exercises"><header class="page-heading"><h1>Owed</h1><button class="icon-button" data-action="refresh" aria-label="Refresh owed exercises" ${busy ? "disabled" : ""}>${icon("refresh")}</button></header><div class="owed-scroll">${players.map((player) => `<section class="player-owed" aria-labelledby="player-${player.id}"><h2 id="player-${player.id}">${escape(player.name)}<span>${player.owed.length}</span></h2>${player.owed.length ? `<ul class="owed-list">${player.owed.map((row) => `<li class="owed-item" data-assignment="${row.id}"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}</span></div><button class="complete-button" data-action="complete" data-target="${player.id}" data-assignment="${row.id}" aria-label="Complete ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" ${busy ? "disabled" : ""}>${icon("check")}</button></li>`).join("")}</ul>` : `<p class="all-done">${icon("check")} All done</p>`}</section>`).join("")}</div></section>`;
+  return `<section class="owed-page" aria-label="Owed exercises"><header class="page-heading"><h1>Owed</h1><button class="icon-button" data-action="refresh" aria-label="Refresh owed exercises" ${busy ? "disabled" : ""}>${icon("refresh")}</button></header><div class="owed-scroll">${players.map((player) => `<section class="player-owed" aria-labelledby="player-${player.id}"><h2 id="player-${player.id}">${escape(player.name)}<span>${player.owed.length}</span></h2>${player.owed.length ? `<ul class="owed-list">${player.owed.map((row) => `<li class="owed-item" data-assignment="${row.id}"><div class="owed-description"><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}</span></div><div class="owed-actions"><button class="dismiss-button" data-action="dismiss" data-assignment="${row.id}" aria-label="Undo roll: ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" title="Undo roll" ${busy ? "disabled" : ""}>${icon("undo")}</button><button class="complete-button" data-action="complete" data-target="${player.id}" data-assignment="${row.id}" aria-label="Complete ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" title="Complete" ${busy ? "disabled" : ""}>${icon("check")}</button></div></li>`).join("")}</ul>` : `<p class="all-done">${icon("check")} All done</p>`}</section>`).join("")}</div></section>`;
+}
+
+function dismissModal() {
+  const player = state.players.find((item) => item.owed.some((row) => row.id === dismissedId));
+  const row = player?.owed.find((item) => item.id === dismissedId);
+  return `<div class="modal-backdrop" data-backdrop></div><dialog open aria-modal="true" aria-labelledby="dismiss-title" class="sheet dismiss-sheet"><header class="sheet-top"><h2 id="dismiss-title">Undo this roll?</h2><button class="icon-button" data-action="close-modal" aria-label="Cancel undo">${icon("close")}</button></header><div class="dismiss-copy"><p>${row ? `${escape(player!.name)} · ${escape(exerciseOf(row.exerciseKey).name)} · ${escape(amount(row))}` : "This exercise is no longer owed."}</p><small>Removed from owed. No completion credit.</small></div><footer class="sheet-footer"><button class="primary destructive" data-action="do-dismiss" ${!row || busy ? "disabled" : ""}>Undo roll</button><button class="cancel-button" data-action="close-modal">Cancel</button></footer></dialog>`;
 }
 
 function injuryModal() {
@@ -86,17 +97,20 @@ function render() {
   const scrollTop = document.querySelector(".owed-scroll")?.scrollTop ?? 0;
   const focused = document.activeElement as HTMLInputElement | null;
   const focusedFilter = modal && focused?.type === "checkbox" ? focused.value : null;
-  dice?.dispose(); dice = undefined;
-  root.innerHTML = `${preview ? `<div class="preview-banner">Preview · sample data</div>` : ""}<main>${tab === "roll" ? rollView() : owedView()}</main><nav class="bottom-nav" aria-label="Game screens">${(["roll", "owed"] as const).map((name) => `<button data-action="${name}" aria-current="${tab === name ? "page" : "false"}" ${busy ? "disabled" : ""}>${icon(name === "roll" ? "dice" : "owed")}<span>${name === "roll" ? "Roll" : "Owed"}</span></button>`).join("")}</nav>${error ? `<div class="toast error-toast" role="alert"><span>${escape(error)}</span><button data-action="dismiss-error" aria-label="Dismiss error">${icon("close")}</button></div>` : notice ? `<div class="toast" role="status">${icon("check")}${escape(notice)}</div>` : ""}${modal ? injuryModal() : ""}`;
+  root.innerHTML = `${preview ? `<div class="preview-banner">Preview · sample data</div>` : ""}<main>${tab === "roll" ? rollView() : owedView()}</main><nav class="bottom-nav" aria-label="Game screens">${(["roll", "owed"] as const).map((name) => `<button data-action="${name}" aria-current="${tab === name ? "page" : "false"}" ${busy ? "disabled" : ""}>${icon(name === "roll" ? "dice" : "owed")}<span>${name === "roll" ? "Roll" : "Owed"}</span></button>`).join("")}</nav>${error ? `<div class="toast error-toast" role="alert"><span>${escape(error)}</span><button data-action="dismiss-error" aria-label="Dismiss error">${icon("close")}</button></div>` : notice ? `<div class="toast" role="status">${icon("check")}${escape(notice)}</div>` : ""}${modal === "injury" ? injuryModal() : modal === "dismiss" ? dismissModal() : ""}`;
   const scroller = document.querySelector(".owed-scroll");
   if (scroller) scroller.scrollTop = scrollTop;
   const stage = document.querySelector<HTMLElement>("#dice-stage");
   if (stage) {
     const exercise = roll ? exerciseOf(roll.exerciseKey) : result ? exerciseOf(result.exerciseKey) : null;
     const labels = exercise ? Array.from({ length: 6 }, (_, i) => amount(exercise.options.length === 6 ? exercise.options[i]! : exercise.options[Math.floor(i / 2)]!)) : eligible().map((item) => item.name);
-    dice = new Dice(stage, labels, !!exercise);
+    const signature = JSON.stringify([!!exercise, labels]);
+    if (dice) {
+      if (signature === diceSignature) dice.mount(stage); else dice.update(stage, labels, !!exercise);
+    } else dice = new Dice(stage, labels, !!exercise);
+    diceSignature = signature;
     if (result) dice.show(result.diceResult - 1, amount(result));
-  }
+  } else { dice?.dispose(); dice = undefined; diceSignature = ""; }
   if (modal) {
     const inputs = [...document.querySelectorAll<HTMLInputElement>("dialog input")];
     (inputs.find((input) => input.value === focusedFilter) ?? document.querySelector<HTMLButtonElement>("dialog button"))?.focus();
@@ -114,12 +128,15 @@ async function perform(work: () => Promise<void>) {
   }
 }
 
-function closeModal() { modal = false; render(); document.querySelector<HTMLButtonElement>('[data-action="injury"]')?.focus(); }
+function closeModal() {
+  const selector = modal === "injury" ? '[data-action="injury"]' : `[data-action="dismiss"][data-assignment="${dismissedId}"]`;
+  modal = null; render(); document.querySelector<HTMLButtonElement>(selector)?.focus();
+}
 
 root.addEventListener("change", (event) => {
   const input = event.target as HTMLInputElement;
   if (input.id === "target") { targetId = Number(input.value); sessionStorage.setItem("dice-target", String(targetId)); filters = []; result = null; render(); }
-  if (input.type === "checkbox" && modal) { filters = input.checked ? [...new Set([...filters, input.value])] : filters.filter((item) => item !== input.value); render(); }
+  if (input.type === "checkbox" && modal === "injury") { filters = input.checked ? [...new Set([...filters, input.value])] : filters.filter((item) => item !== input.value); render(); }
 });
 root.addEventListener("click", async (event) => {
   if ((event.target as HTMLElement).hasAttribute("data-backdrop")) { closeModal(); return; }
@@ -131,11 +148,13 @@ root.addEventListener("click", async (event) => {
     if (action === "owed") await perform(load); else render();
     return;
   }
-  if (action === "injury") { clearTimeout(noticeTimer); notice = ""; result = null; modal = true; render(); return; }
+  if (action === "injury") { clearTimeout(noticeTimer); notice = ""; result = null; modal = "injury"; render(); return; }
+  if (action === "dismiss") { clearTimeout(noticeTimer); notice = ""; dismissedId = Number(button.dataset.assignment); modal = "dismiss"; render(); return; }
   if (action === "close-modal") { closeModal(); return; }
   if (action === "dismiss-error") { error = ""; render(); return; }
   // Clear the saved result before rendering the activity dice for the next roll.
   if (action === "activity") result = null;
+  if (action === "do-dismiss") modal = null;
   await perform(async () => {
     if (action === "refresh") { await load(); notice = "Up to date"; return; }
     if (action === "activity") {
@@ -144,6 +163,7 @@ root.addEventListener("click", async (event) => {
       const choices = eligible(response.roll.injuryFilters);
       const exercise = exerciseOf(response.roll.exerciseKey);
       await dice?.roll(Math.max(0, choices.findIndex((item) => item.key === exercise.key)), exercise.name);
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches) await new Promise((resolve) => setTimeout(resolve, 260));
       roll = response.roll; targetId = roll.targetPlayerId; filters = [];
       if (roll.assignmentId) { await load(); result = state.history.find((item) => item.id === response.roll.assignmentId) ?? null; }
       haptic("medium"); return;
@@ -158,6 +178,11 @@ root.addEventListener("click", async (event) => {
       const assignmentId = Number(button.dataset.assignment), playerId = Number(button.dataset.target);
       const response = await api<{ completed: number }>("/api/complete", { targetPlayerId: playerId, assignmentIds: [assignmentId], nextOnly: false });
       await load(); notice = response.completed ? "Completed" : "Already completed"; haptic("medium");
+    }
+    if (action === "do-dismiss") {
+      await api("/api/dismiss", { assignmentId: dismissedId });
+      if (result?.id === dismissedId) result = null;
+      await load(); notice = "Roll dismissed"; haptic("medium");
     }
   });
 });

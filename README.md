@@ -1,6 +1,6 @@
 # Exercise Dice Bot
 
-The Telegram Mini App has two screens: Roll and Owed. It provides labelled 3D dice, per-roll injury exclusions, and individual exercise completion. The leaderboard stays in the group chat with the app launcher. See [MINI_APP.md](MINI_APP.md) for setup and verification. The legacy controls below remain available while `MINI_APP_ENABLED=false`.
+The Telegram Mini App has two screens: Roll and Owed. It provides animated, textured 3D dice, per-roll injury exclusions, and individual exercise completion or dismissal. The leaderboard stays in the group chat with the app launcher. See [MINI_APP.md](MINI_APP.md) for setup and verification. The legacy controls below remain available while `MINI_APP_ENABLED=false`.
 
 A private Telegram group game: choose a player in your own private-in-the-group controller, roll a real Telegram 🎲, and assign the exercise that face determines. Assignments stay separate and in order; they are not merged into workout totals.
 

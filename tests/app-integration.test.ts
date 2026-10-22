@@ -111,4 +111,39 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     const retry = await complete();
     expect(retry.status).toBe(200); expect(await retry.json()).toEqual({ completed: 0 });
   });
+  it("dismisses any exact owed row with an audit trail, without completion credit", async () => {
+    const owed = await game.outstandingAssignments(group, target.id);
+    const original = owed[0]!;
+    const before = (await game.completedAssignments(group)).map((row) => row.id);
+    const otherOwed = (await game.outstandingAssignments(group, operator.id)).map((row) => row.id);
+    // A different member may dismiss an older roll, unlike legacy last-roll undo.
+    const dismiss = () => fetch(base + "/api/dismiss", { method: "POST", headers: { Authorization: auth(1002), "Content-Type": "application/json" }, body: JSON.stringify({ assignmentId: original.id }) });
+    const responses = await Promise.all(Array.from({ length: 5 }, dismiss));
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      const { assignment } = await response.json();
+      expect(assignment.undoneAt).toBeTruthy(); expect(assignment.undoneByPlayerId).toBe(target.id); expect(assignment.completedAt).toBeNull();
+    }
+    expect((await game.outstandingAssignments(group, target.id)).some((row) => row.id === original.id)).toBe(false);
+    expect((await game.completedAssignments(group)).map((row) => row.id)).toEqual(before);
+    expect((await game.outstandingAssignments(group, operator.id)).map((row) => row.id)).toEqual(otherOwed);
+    expect((await database.pool.query("SELECT count(*)::int AS count FROM assignments WHERE id=$1", [original.id])).rows[0].count).toBe(1);
+  });
+  it("rejects dismissal of completed, missing, foreign-group or unsigned rows", async () => {
+    const completed = (await game.completedAssignments(group))[0]!;
+    await expect(app.dismissAppAssignment(operator, completed.id)).rejects.toThrow("already complete");
+    await expect(app.dismissAppAssignment(operator, 999999)).rejects.toThrow("not found");
+    const foreignGroup = -7777;
+    await game.addPlayer(foreignGroup, { id: 1002, first_name: "Test target" });
+    const foreign = await database.pool.query("INSERT INTO assignments (group_id,target_player_id,operator_player_id,exercise_key,measurement,amount,dice_result,game_date) VALUES ($1,$2,$3,'squats','reps',10,1,CURRENT_DATE) RETURNING id", [foreignGroup, target.id, operator.id]);
+    await expect(app.dismissAppAssignment(operator, foreign.rows[0].id)).rejects.toThrow("not found");
+    expect((await fetch(base + "/api/dismiss", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ assignmentId: completed.id }) })).status).toBe(401);
+  });
+  it("serializes completion against dismissal so an item cannot be both", async () => {
+    const pending = await app.beginRoll(operator, { id: randomUUID(), targetPlayerId: target.id, injuryFilters: [] });
+    const row = await app.finishRoll(operator, pending.id);
+    await Promise.allSettled([app.completeAppAssignments(target.id, [row.id], false), app.dismissAppAssignment(operator, row.id)]);
+    const saved = (await database.pool.query("SELECT completed_at,undone_at FROM assignments WHERE id=$1", [row.id])).rows[0];
+    expect(Boolean(saved.completed_at) !== Boolean(saved.undone_at)).toBe(true);
+  });
 });

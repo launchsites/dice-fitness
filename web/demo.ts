@@ -41,6 +41,11 @@ export async function demoRequest(path: string, body?: Record<string, unknown>):
     for (const row of history) if ((body!.assignmentIds as number[]).includes(row.id) && !row.completedAt) { row.completedAt = new Date().toISOString(); completed++; }
     return { completed };
   }
-  if (path === "/api/undo") { const row = history.find((item) => item.id === body!.assignmentId); if (row) row.undoneAt = now; return { assignment: row }; }
+  if (path === "/api/dismiss" || path === "/api/undo") {
+    const row = history.find((item) => item.id === body!.assignmentId);
+    if (row?.completedAt && path === "/api/dismiss") throw new Error("This exercise is already complete.");
+    if (row) { row.undoneAt = now; row.undoneByPlayerId = 1; }
+    return { assignment: row };
+  }
   throw new Error("Preview action unavailable.");
 }

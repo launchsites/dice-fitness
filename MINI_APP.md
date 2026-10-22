@@ -8,7 +8,11 @@ The Roll screen fits the viewport without page scrolling: player, injury control
 
 An unfinished roll resumes after reload; its activity and player stay locked until the amount is rolled. Repeated finalization requests return the same assignment. Injury choices belong only to that roll, reset for the next one, and are never saved to a player's profile. The compact injury sheet describes excluded movements. These are movement exclusions, not a medical assessment.
 
-**Owed** shows each player's individual exercises. The tick beside an exercise completes only that exact assignment, in any order. Retries cannot complete a different item. Long lists scroll inside the Owed screen while the two-tab navigation remains visible, and completing an item preserves the list position. Entering Owed or tapping its refresh button fetches the latest state. There is no bulk-complete, history or leaderboard screen in the app; underlying audit history and legacy chat operations remain intact.
+**Owed** shows each player's individual exercises. The tick beside an exercise completes only that exact assignment, in any order. The undo arrow opens a confirmation to dismiss that exact owed roll without completion credit. Any active group member can dismiss an owed item; completed exercises cannot be dismissed. Dismissal is soft undo with the acting player's ID and timestamp, not deletion. Both actions are retry-safe and serialize against each other. Long lists scroll inside the Owed screen while the two-tab navigation remains visible, and completing or dismissing an item preserves the list position. Entering Owed or tapping its refresh button fetches the latest state. There is no bulk-complete, history or leaderboard screen in the app; underlying audit history and legacy chat operations remain intact.
+
+Dice use Three.js rounded/chamfered geometry, physical white materials, a subtle procedural surface texture, room reflections and feathered contact shadows. Motion eases through a tumble, bounce and settle; reduced-motion users receive a short transition. Ordinary busy states retain the renderer rather than resetting it, and animation pauses while the app is hidden.
+
+Layout adds device safe-area and Telegram content-safe-area insets. It observes safe-area, fullscreen and viewport events, including late native updates, and preserves browser notch-inset fallbacks. Headers, controls and sheets remain below Telegram chrome. The stable viewport height keeps the roll action and navigation on-screen.
 
 ## Telegram and hosting setup
 
@@ -52,6 +56,6 @@ Integration tests require a disposable localhost database named `dice_test`. **T
 TEST_DATABASE_URL=postgres://postgres:local-test-password@127.0.0.1:55439/dice_test npm test
 ```
 
-Tests cover Telegram signature tampering/expiry, injury unions, unfinished-roll recovery, concurrent retries, oldest-item and individually selected completion, undo scope, membership and projection refresh ordering. Individual completion is tested through the HTTP endpoint, including retry safety and preservation of older exercises and other players' items.
+Tests cover Telegram signature tampering/expiry, injury unions, unfinished-roll recovery, concurrent retries, oldest-item and individually selected completion, undo scope, membership and projection refresh ordering. Individual completion and owed dismissal are tested through HTTP, including retries, preservation of unrelated rows, audit fields, rejection of completed/foreign-group rows and dismissal/completion races. Safe-area unit tests cover additive insets, fullscreen fallback, landscape cutouts and invalid values.
 
 `node dist/scripts/mini-app-status.js` prints non-secret deployment mode and player/assignment counts. The guarded group-migration utility now also moves pending app rolls if Telegram upgrades the group's ID again.

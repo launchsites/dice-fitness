@@ -17,6 +17,9 @@ let busy = false;
 let error = "";
 let notice = "";
 let modal = "";
+let confirmedIds: number[] = [];
+let confirmedTarget = 0;
+let confirmedUndo = 0;
 let dice: Dice | undefined;
 
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
@@ -91,7 +94,7 @@ function injuryModal() {
 
 function confirmModal(type: string) {
   const player = state.players.find((item) => item.id === owedTarget)!;
-  return `<dialog open aria-labelledby="confirm-title" class="sheet compact-sheet"><p class="eyebrow">QUICK CHECK</p><h2 id="confirm-title">${type === "confirm-all" ? `Completed all ${player.owed.length}?` : "Undo your last roll?"}</h2><p class="sheet-copy">${type === "confirm-all" ? `Mark the currently displayed exercises as done for ${escape(player.name)}.` : "This removes your latest assignment and updates the leaderboard. Its audit record is kept."}</p><button class="primary" data-action="${type === "confirm-all" ? "do-complete-all" : "undo"}">${type === "confirm-all" ? "Yes, all done" : "Undo roll"}<span>✓</span></button><button class="text-button" data-action="close-modal">Cancel</button></dialog>`;
+  return `<dialog open aria-labelledby="confirm-title" class="sheet compact-sheet"><p class="eyebrow">QUICK CHECK</p><h2 id="confirm-title">${type === "confirm-all" ? `Completed all ${confirmedIds.length}?` : "Undo your last roll?"}</h2><p class="sheet-copy">${type === "confirm-all" ? `Mark the currently displayed exercises as done for ${escape(player.name)}.` : "This removes your latest assignment and updates the leaderboard. Its audit record is kept."}</p><button class="primary" data-action="${type === "confirm-all" ? "do-complete-all" : "undo"}">${type === "confirm-all" ? "Yes, all done" : "Undo roll"}<span>✓</span></button><button class="text-button" data-action="close-modal">Cancel</button></dialog>`;
 }
 
 function render() {
@@ -133,7 +136,12 @@ root.addEventListener("click", async (event) => {
   if (action === "injury") { modal = "injury"; render(); return; }
   if (action === "close-modal") { modal = ""; render(); return; }
   if (action === "dismiss-error") { error = ""; render(); return; }
-  if (action === "complete-all" || action === "confirm-undo") { modal = action === "complete-all" ? "confirm-all" : "confirm-undo"; render(); return; }
+  if (action === "complete-all" || action === "confirm-undo") {
+    confirmedTarget = owedTarget;
+    confirmedIds = state.players.find((player) => player.id === owedTarget)?.owed.map((item) => item.id) ?? [];
+    confirmedUndo = state.lastRoll?.id ?? 0;
+    modal = action === "complete-all" ? "confirm-all" : "confirm-undo"; render(); return;
+  }
   if (action === "again") { result = null; roll = null; filters = []; requestId = null; render(); return; }
   await perform(async () => {
     if (action === "refresh") { await load(); notice = "Up to date."; return; }
@@ -155,14 +163,14 @@ root.addEventListener("click", async (event) => {
     }
     if (action === "complete-next" || action === "do-complete-all") {
       const player = state.players.find((item) => item.id === owedTarget)!;
-      const ids = (action === "complete-next" ? player.owed.slice(0, 1) : player.owed).map((item) => item.id);
+      const ids = action === "complete-next" ? player.owed.slice(0, 1).map((item) => item.id) : confirmedIds;
       modal = "";
-      const response = await api<{ completed: number }>("/api/complete", { targetPlayerId: owedTarget, assignmentIds: ids, nextOnly: action === "complete-next" });
+      const response = await api<{ completed: number }>("/api/complete", { targetPlayerId: action === "complete-next" ? owedTarget : confirmedTarget, assignmentIds: ids, nextOnly: action === "complete-next" });
       await load(); notice = response.completed ? `${response.completed === 1 ? "Top exercise" : `${response.completed} exercises`} ticked off.` : "Already ticked off.";
       haptic("medium"); return;
     }
-    if (action === "undo" && state.lastRoll) {
-      modal = ""; await api("/api/undo", { assignmentId: state.lastRoll.id }); result = null;
+    if (action === "undo" && confirmedUndo) {
+      modal = ""; await api("/api/undo", { assignmentId: confirmedUndo }); result = null;
       await load(); notice = "Your last roll was undone.";
     }
   });

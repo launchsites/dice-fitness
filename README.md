@@ -1,5 +1,7 @@
 # Exercise Dice Bot
 
+The new Telegram Mini App adds labelled 3D dice, per-roll injury exclusions, an owed queue, history, and one group leaderboard/launcher. See [MINI_APP.md](MINI_APP.md) for setup and verification. The legacy controls below remain available while `MINI_APP_ENABLED=false`.
+
 A private Telegram group game: choose a player in your own private-in-the-group controller, roll a real Telegram 🎲, and assign the exercise that face determines. Assignments stay separate and in order; they are not merged into workout totals.
 
 ## What it does

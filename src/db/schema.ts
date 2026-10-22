@@ -1,4 +1,5 @@
-import { bigint, boolean, date, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { bigint, boolean, date, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 const createdAt = timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 const joinedAt = timestamp("joined_at", { withTimezone: true }).notNull().defaultNow();
@@ -34,3 +35,16 @@ export const dailyBoards = pgTable("daily_boards", {
 export const botMessages = pgTable("bot_messages", {
   groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id), key: text("key").notNull(), telegramMessageId: integer("telegram_message_id"), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [uniqueIndex("bot_messages_group_key_unique").on(table.groupId, table.key)]);
+
+export const appRolls = pgTable("app_rolls", {
+  id: uuid("id").primaryKey(),
+  groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
+  operatorPlayerId: integer("operator_player_id").notNull().references(() => players.id),
+  targetPlayerId: integer("target_player_id").notNull().references(() => players.id),
+  exerciseKey: text("exercise_key").notNull(),
+  injuryFilters: jsonb("injury_filters").$type<string[]>().notNull().default([]),
+  assignmentId: integer("assignment_id").references(() => assignments.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("app_rolls_one_pending_per_operator").on(table.groupId, table.operatorPlayerId).where(sql`${table.assignmentId} IS NULL`),
+]);

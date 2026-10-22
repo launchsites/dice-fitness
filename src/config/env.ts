@@ -15,4 +15,8 @@ export const env = {
   gameChatId: chatId,
   timezone: process.env.TZ || "Europe/London",
   logLevel: process.env.LOG_LEVEL || "info",
+  miniAppUrl: process.env.MINI_APP_URL?.trim() || "",
+  miniAppEnabled: process.env.MINI_APP_ENABLED === "true",
+  botUsername: process.env.BOT_USERNAME?.trim() || "dicefitnessbot",
+  port: Number(process.env.PORT || 3000),
 } as const;

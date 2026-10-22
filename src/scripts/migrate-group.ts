@@ -2,7 +2,7 @@ import { Bot } from "grammy";
 import { count, eq } from "drizzle-orm";
 import { env } from "../config/env.js";
 import { closeDatabase, db } from "../db/client.js";
-import { assignments, botMessages, completionBatches, dailyBoards, groupPlayers, groups, operatorPreferences } from "../db/schema.js";
+import { appRolls, assignments, botMessages, completionBatches, dailyBoards, groupPlayers, groups, operatorPreferences } from "../db/schema.js";
 import { initialiseGame } from "../bot/index.js";
 import { refreshDailyBoard } from "../services/projection-service.js";
 
@@ -45,6 +45,7 @@ try {
     await tx.delete(completionBatches).where(eq(completionBatches.groupId, targetGroupId));
     await tx.delete(operatorPreferences).where(eq(operatorPreferences.groupId, targetGroupId));
     await tx.update(assignments).set({ groupId: targetGroupId }).where(eq(assignments.groupId, sourceGroupId));
+    await tx.update(appRolls).set({ groupId: targetGroupId }).where(eq(appRolls.groupId, sourceGroupId));
     await tx.update(completionBatches).set({ groupId: targetGroupId }).where(eq(completionBatches.groupId, sourceGroupId));
     await tx.update(operatorPreferences).set({ groupId: targetGroupId }).where(eq(operatorPreferences.groupId, sourceGroupId));
     await tx.update(groupPlayers).set({ groupId: targetGroupId }).where(eq(groupPlayers.groupId, sourceGroupId));

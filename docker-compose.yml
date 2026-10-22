@@ -8,6 +8,12 @@ services:
       GAME_CHAT_ID: ${GAME_CHAT_ID:?Set GAME_CHAT_ID in Coolify}
       TZ: ${TZ:-Europe/London}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      MINI_APP_URL: ${MINI_APP_URL:-}
+      MINI_APP_ENABLED: ${MINI_APP_ENABLED:-false}
+      BOT_USERNAME: ${BOT_USERNAME:-dicefitnessbot}
+      PORT: 3000
+    expose:
+      - "3000"
     depends_on:
       postgres:
         condition: service_healthy

@@ -7,6 +7,7 @@ import { refreshDailyBoard, refreshLeaderboard } from "../services/projection-se
 import { controllerView, owedView, playerPicker } from "../renderers/controller.js";
 import { withUserLock } from "../utils/lock.js";
 import { displayName } from "../utils/text.js";
+import { createMiniAppBot, initialiseMiniApp } from "./mini-app.js";
 
 const html = { parse_mode: "HTML" as const, link_preview_options: { is_disabled: true } };
 const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -155,6 +156,7 @@ async function runRoll(ctx: Context, operator: { id: number; telegramUserId: num
 }
 
 export function createBot(): Bot {
+  if (env.miniAppEnabled) return createMiniAppBot();
   const bot = new Bot(env.botToken);
   bot.catch((error) => logger.error({ err: error.error, updateId: error.ctx.update.update_id }, "Telegram update failed"));
 
@@ -162,6 +164,10 @@ export function createBot(): Bot {
     if (ctx.chat?.type !== "private") {
       if (isGameGroup(ctx)) { await refreshLeaderboard(ctx.api); return; }
       logger.info({ chatId: ctx.chat?.id, chatType: ctx.chat?.type }, "Received /start in unconfigured chat");
+      return;
+    }
+    if (env.miniAppUrl) {
+      await ctx.reply("Open Dice Fitness to choose a player, roll, and tick exercises off.", { reply_markup: new InlineKeyboard().webApp("Open dice rolls", env.miniAppUrl) });
       return;
     }
     const player = await requirePlayer(ctx);
@@ -345,6 +351,7 @@ export function createBot(): Bot {
 }
 
 export async function initialiseGame(bot: Bot): Promise<void> {
+  if (env.miniAppEnabled) { await initialiseMiniApp(bot); return; }
   await ensureGroup(env.gameChatId);
   try {
     await bot.api.setMyCommands([

@@ -28,16 +28,23 @@ try {
     const stateChecks = await Promise.all([
       tx.select({ total: count() }).from(assignments).where(eq(assignments.groupId, targetGroupId)),
       tx.select({ total: count() }).from(completionBatches).where(eq(completionBatches.groupId, targetGroupId)),
-      tx.select({ total: count() }).from(groupPlayers).where(eq(groupPlayers.groupId, targetGroupId)),
       tx.select({ total: count() }).from(operatorPreferences).where(eq(operatorPreferences.groupId, targetGroupId)),
     ]);
     const targetStateRows = stateChecks.flat().reduce((total, row) => total + Number(row.total), 0);
     if (targetStateRows > 0) throw new Error("Target group already has game state; refusing to merge automatically");
 
+    const sourcePlayers = await tx.select({ playerId: groupPlayers.playerId }).from(groupPlayers).where(eq(groupPlayers.groupId, sourceGroupId));
+    const targetPlayers = await tx.select({ playerId: groupPlayers.playerId }).from(groupPlayers).where(eq(groupPlayers.groupId, targetGroupId));
+    const sourcePlayerIds = new Set(sourcePlayers.map((player) => player.playerId));
+    if (targetPlayers.some((player) => !sourcePlayerIds.has(player.playerId))) {
+      throw new Error("Target group contains a player not present in the source group; refusing to merge automatically");
+    }
+
     // Message IDs are only valid in their original chat. Keep the target's newly-created
     // controls/leaderboard pointers, discard stale source projections, and regenerate them later.
     await tx.delete(dailyBoards).where(eq(dailyBoards.groupId, sourceGroupId));
     await tx.delete(botMessages).where(eq(botMessages.groupId, sourceGroupId));
+    await tx.delete(groupPlayers).where(eq(groupPlayers.groupId, targetGroupId));
     await tx.update(assignments).set({ groupId: targetGroupId }).where(eq(assignments.groupId, sourceGroupId));
     await tx.update(completionBatches).set({ groupId: targetGroupId }).where(eq(completionBatches.groupId, sourceGroupId));
     await tx.update(operatorPreferences).set({ groupId: targetGroupId }).where(eq(operatorPreferences.groupId, sourceGroupId));

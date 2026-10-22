@@ -92,4 +92,23 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     expect(invalid.status).toBe(409);
     expect((await fetch(base + "/health")).status).toBe(200);
   });
+  it("completes an individually selected exercise without completing older or other players' items", async () => {
+    for (const player of [target, target, operator]) {
+      const pending = await app.beginRoll(operator, { id: randomUUID(), targetPlayerId: player.id, injuryFilters: [] });
+      await app.finishRoll(operator, pending.id);
+    }
+    const owed = await game.outstandingAssignments(group, target.id);
+    const otherOwed = await game.outstandingAssignments(group, operator.id);
+    const completedBefore = (await game.completedAssignments(group)).length;
+    expect(owed).toHaveLength(2);
+    const payload = { targetPlayerId: target.id, assignmentIds: [owed[1]!.id], nextOnly: false };
+    const complete = () => fetch(base + "/api/complete", { method: "POST", headers: { Authorization: auth(), "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const response = await complete();
+    expect(response.status).toBe(200); expect(await response.json()).toEqual({ completed: 1 });
+    expect((await game.outstandingAssignments(group, target.id)).map((row) => row.id)).toEqual([owed[0]!.id]);
+    expect((await game.outstandingAssignments(group, operator.id)).map((row) => row.id)).toEqual(otherOwed.map((row) => row.id));
+    expect((await game.completedAssignments(group)).length).toBe(completedBefore + 1);
+    const retry = await complete();
+    expect(retry.status).toBe(200); expect(await retry.json()).toEqual({ completed: 0 });
+  });
 });

@@ -1,14 +1,14 @@
 # Dice Fitness Mini App
 
-The group has one editable leaderboard with **Open dice rolls**. Player selection, two-stage dice rolls, owed lists, completion, all-time totals and history live inside the app. Individual assignment records and all existing totals are preserved.
+The group has one editable leaderboard with **Open dice rolls**. The app has only **Roll** and **Owed**, in a dark Telegram-style UI. Individual assignment records and all existing totals are preserved; the leaderboard and totals stay in the chat.
 
 ## Flow
 
-Choose a player, optionally apply injury filters, roll an activity, then roll its reps/time. Each eligible activity has equal odds. The D20 is a Three.js (MIT) animation of the server's saved choice; repeated labels on its 20 visual faces do not change those odds. The second die uses the original six-face option mapping.
+The Roll screen fits the viewport without page scrolling: player, injury control, white labelled dice, and a large blue Roll button. Choose a player, optionally apply injury filters, roll an activity, then roll its reps/time. Each eligible activity has equal odds. The D20 is a Three.js (MIT) animation of the server's saved choice; repeated labels on its 20 visual faces do not change those odds. The second die uses the original six-face option mapping.
 
-An unfinished roll resumes after reload; its activity and player stay locked until the amount is rolled. Repeated finalization requests return the same assignment. Injury choices belong only to that roll, reset for the next one, and are never saved to a player's profile. The filter sheet shows exactly which activities are excluded. These are movement exclusions, not a medical assessment.
+An unfinished roll resumes after reload; its activity and player stay locked until the amount is rolled. Repeated finalization requests return the same assignment. Injury choices belong only to that roll, reset for the next one, and are never saved to a player's profile. The compact injury sheet describes excluded movements. These are movement exclusions, not a medical assessment.
 
-**Tick 1 off** completes the explicitly displayed oldest owed item. Retrying it cannot complete the next one. **Mark all done** confirms the displayed snapshot; newly rolled exercises are not accidentally included. **History** can undo only the operator's explicitly displayed latest roll, preserving an audit record.
+**Owed** shows each player's individual exercises. The tick beside an exercise completes only that exact assignment, in any order. Retries cannot complete a different item. Long lists scroll inside the Owed screen while the two-tab navigation remains visible, and completing an item preserves the list position. Entering Owed or tapping its refresh button fetches the latest state. There is no bulk-complete, history or leaderboard screen in the app; underlying audit history and legacy chat operations remain intact.
 
 ## Telegram and hosting setup
 
@@ -52,6 +52,6 @@ Integration tests require a disposable localhost database named `dice_test`. **T
 TEST_DATABASE_URL=postgres://postgres:local-test-password@127.0.0.1:55439/dice_test npm test
 ```
 
-Tests cover Telegram signature tampering/expiry, injury unions, unfinished-roll recovery, concurrent retries, oldest-item completion, undo scope, membership and projection refresh ordering.
+Tests cover Telegram signature tampering/expiry, injury unions, unfinished-roll recovery, concurrent retries, oldest-item and individually selected completion, undo scope, membership and projection refresh ordering. Individual completion is tested through the HTTP endpoint, including retry safety and preservation of older exercises and other players' items.
 
 `node dist/scripts/mini-app-status.js` prints non-secret deployment mode and player/assignment counts. The guarded group-migration utility now also moves pending app rolls if Telegram upgrades the group's ID again.

@@ -86,7 +86,7 @@ export async function finishRoll(operator: Player, rollId: string) {
   });
 }
 
-/** Complete exactly the displayed oldest row; retries cannot tick a second exercise. */
+/** Complete only the selected rows; optionally enforce oldest-first for the chat button. */
 export async function completeAppAssignments(targetId: number, expectedIds: number[], nextOnly: boolean) {
   return db.transaction(async (tx) => {
     await targetLock(tx, targetId);

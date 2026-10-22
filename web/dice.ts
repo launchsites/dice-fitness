@@ -22,8 +22,8 @@ export class Dice {
       container.appendChild(this.renderer.domElement);
       this.camera.position.set(0, 0.5, 6.2);
       this.camera.lookAt(0, 0, 0);
-      this.scene.add(new THREE.AmbientLight(0xffffff, 2.5));
-      const light = new THREE.DirectionalLight(0xffffff, 3);
+      this.scene.add(new THREE.AmbientLight(0xffffff, 1.8));
+      const light = new THREE.DirectionalLight(0xffffff, 2.3);
       light.position.set(-3, 5, 6); this.scene.add(light);
       if (cube) this.cube(labels); else this.icosahedron(labels);
       this.die.rotation.set(0.18, -0.3, -0.12);
@@ -43,11 +43,11 @@ export class Dice {
   private texture(label: string, triangle: boolean, index: number) {
     const canvas = document.createElement("canvas"); canvas.width = canvas.height = 512;
     const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = triangle ? (index % 3 === 0 ? "#d2ed9b" : "#b9d982") : "#d2ed9b"; ctx.fillRect(0, 0, 512, 512);
-    ctx.strokeStyle = "#8ca65f"; ctx.lineWidth = 8;
+    ctx.fillStyle = triangle && index % 3 === 0 ? "#f1f2f4" : "#ffffff"; ctx.fillRect(0, 0, 512, 512);
+    ctx.strokeStyle = "#c4c9ce"; ctx.lineWidth = 5;
     if (triangle) { ctx.beginPath(); ctx.moveTo(8, 504); ctx.lineTo(504, 504); ctx.lineTo(256, 8); ctx.closePath(); ctx.stroke(); }
     else ctx.strokeRect(12, 12, 488, 488);
-    ctx.fillStyle = "#24321d"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#111418"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     const words = label.toUpperCase().split(/[\s-]+/);
     const lines: string[] = [];
     let line = "";
@@ -69,7 +69,7 @@ export class Dice {
     this.die.add(new THREE.Mesh(geometry, materials));
     this.normals = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map(([x, y, z]) => new THREE.Vector3(x, y, z));
     this.ups = [[0, 1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1], [0, 1, 0], [0, 1, 0]].map(([x, y, z]) => new THREE.Vector3(x, y, z));
-    this.die.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: 0x5c7341, transparent: true, opacity: 0.5 })));
+    this.die.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: 0x939ca5, transparent: true, opacity: 0.55 })));
   }
 
   private icosahedron(labels: string[]) {
@@ -85,7 +85,7 @@ export class Dice {
       this.ups.push(vertices[2]!.clone().sub(vertices[0]!.clone().add(vertices[1]!).add(vertices[2]!).divideScalar(3)).normalize());
       this.die.add(new THREE.Mesh(face, new THREE.MeshStandardMaterial({ map: this.texture(labels[i % labels.length] || "Fitness", true, i), roughness: 0.75, metalness: 0.05 })));
     }
-    this.die.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: 0x526b36, transparent: true, opacity: 0.5 })));
+    this.die.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: 0x939ca5, transparent: true, opacity: 0.55 })));
     geometry.dispose();
   }
 

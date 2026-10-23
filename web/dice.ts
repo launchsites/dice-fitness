@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { DiceInspection, DiceQuality } from "./dice-controls.js";
+import { DiceInertia, DiceInspection, DiceQuality } from "./dice-controls.js";
+import { activityDie, faceUv } from "./dice-shapes.js";
 
 type Rolling = { start: number; duration: number; initial: THREE.Quaternion; target: THREE.Quaternion; resolve(): void };
 
@@ -25,6 +26,7 @@ export class Dice {
   private noise?: THREE.CanvasTexture;
   private labelMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private inspection = new DiceInspection();
+  private inertia = new DiceInertia();
   private inspectable = false;
   private pointerX = 0;
   private pointerY = 0;
@@ -62,7 +64,7 @@ export class Dice {
 
       this.noise = this.surfaceNoise();
       this.surface = new THREE.MeshPhysicalMaterial({ color: 0xf6f7fa, roughness: 0.26, metalness: 0, clearcoat: 0.85, clearcoatRoughness: 0.16, bumpMap: this.noise, bumpScale: 0.009, envMapIntensity: 1.05 });
-      if (isCube) this.cube(labels); else this.icosahedron(labels);
+      if (isCube) this.cube(labels); else this.activity(labels);
       this.rest.copy(this.orientation(isCube ? 4 : 0));
       this.die.quaternion.copy(this.rest);
       this.scene.add(this.die);
@@ -101,10 +103,11 @@ export class Dice {
     if (this.renderer) container.appendChild(this.renderer.domElement);
     else if (fallback) container.appendChild(fallback);
     this.observer?.disconnect(); this.observer?.observe(container); this.resize();
+    container.dataset.faceCount = String(this.normals.length);
   }
 
   update(container: HTMLElement, labels: string[], isCube: boolean) {
-    this.cancelPointer(); this.inspection.reset(); this.idleAnchorY = 0; this.warmUntil = performance.now() + 1000;
+    this.cancelPointer(); this.inertia.stop(); this.inspection.reset(); this.idleAnchorY = 0; this.warmUntil = performance.now() + 1000;
     this.mount(container);
     this.isCube = isCube;
     if (!this.renderer) {
@@ -119,7 +122,8 @@ export class Dice {
     for (const material of this.labelMaterials.values()) { material.map?.dispose(); material.dispose(); }
     this.labelMaterials.clear();
     this.die.clear(); this.normals = []; this.ups = [];
-    if (isCube) this.cube(labels); else this.icosahedron(labels);
+    if (isCube) this.cube(labels); else this.activity(labels);
+    this.container.dataset.faceCount = String(this.normals.length);
     this.rest.copy(this.orientation(isCube ? 4 : 0)); this.die.quaternion.copy(this.rest); this.die.position.set(0, 0, 0);
     if (this.floor) this.floor.position.y = isCube ? -1.35 : -1.62;
     if (!this.reduced.matches) this.renderer.domElement.animate([{ opacity: 0, transform: "scale(.88)" }, { opacity: 1, transform: "scale(1)" }], { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" });
@@ -139,14 +143,14 @@ export class Dice {
     return map;
   }
 
-  private label(label: string, triangle: boolean, index: number) {
-    const key = triangle ? label : `${label}:${index}`;
+  private label(label: string, triangle: boolean, index: number, activity = false) {
+    const key = activity ? `activity:${triangle}:${label}` : `amount:${label}:${index}`;
     const cached = this.labelMaterials.get(key); if (cached) return cached;
     const canvas = document.createElement("canvas"); canvas.width = canvas.height = this.quality.labelSize(this.renderer!.capabilities.maxTextureSize);
     const ctx = canvas.getContext("2d")!;
     ctx.scale(canvas.width / 512, canvas.height / 512);
     ctx.fillStyle = "#14202b"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    if (!triangle) {
+    if (!activity) {
       const [value, unit] = label.endsWith("s") && !label.endsWith("reps") ? [label.slice(0, -1), "sec"] : label.split(" ");
       ctx.font = "650 156px -apple-system, BlinkMacSystemFont, sans-serif";
       ctx.fillText(value!, 256, 213, 390);
@@ -162,8 +166,8 @@ export class Dice {
         else line = (line + " " + word).trim();
       }
       if (line) lines.push(line);
-      ctx.font = "650 47px -apple-system, BlinkMacSystemFont, sans-serif";
-      lines.forEach((text, i) => ctx.fillText(text, 256, 324 + (i - (lines.length - 1) / 2) * 54, 292));
+      ctx.font = `650 ${triangle ? 47 : 60}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      lines.forEach((text, i) => ctx.fillText(text, 256, (triangle ? 324 : 256) + (i - (lines.length - 1) / 2) * (triangle ? 54 : 70), triangle ? 292 : 400));
     }
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = Math.min(16, this.renderer!.capabilities.getMaxAnisotropy());
@@ -184,38 +188,35 @@ export class Dice {
     }
   }
 
-  private icosahedron(labels: string[]) {
-    const original = new THREE.IcosahedronGeometry(1.55, 0);
-    const positions = original.getAttribute("position");
-    const bevelPoints: THREE.Vector3[] = [];
-    for (let i = 0; i < 20; i++) {
-      const vertices = [0, 1, 2].map((j) => new THREE.Vector3().fromBufferAttribute(positions, i * 3 + j));
-      const center = vertices[0]!.clone().add(vertices[1]!).add(vertices[2]!).divideScalar(3);
-      const normal = center.clone().normalize();
-      this.normals.push(normal); this.ups.push(vertices[2]!.clone().sub(center).normalize());
-      bevelPoints.push(...vertices.map((vertex) => vertex.clone().lerp(center, 0.1)));
-      const inset = vertices.map((vertex) => vertex.clone().lerp(center, 0.17).addScaledVector(normal, 0.005));
+  private activity(labels: string[]) {
+    const shape = activityDie(labels.length);
+    const bevelPoints = shape.shell.flatMap((item) => item.vertices.map((vertex) => vertex.clone().lerp(item.center, .1)));
+    shape.faces.forEach((item, i) => {
+      this.normals.push(item.normal); this.ups.push(item.up);
+      const inset = item.vertices.map((vertex) => vertex.clone().lerp(item.center, .17).addScaledVector(item.normal, .005));
       const face = new THREE.BufferGeometry();
       face.setAttribute("position", new THREE.Float32BufferAttribute(inset.flatMap((vertex) => vertex.toArray()), 3));
-      face.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 0.5, 1], 2));
-      face.computeVertexNormals(); this.die.add(new THREE.Mesh(face, this.label(labels[i % labels.length] || "Roll", true, i)));
-    }
+      face.setAttribute("uv", new THREE.Float32BufferAttribute(faceUv(item), 2));
+      face.setIndex(Array.from({ length: inset.length - 2 }, (_, j) => [0, j + 1, j + 2]).flat());
+      face.computeVertexNormals(); this.die.add(new THREE.Mesh(face, this.label(labels[i]!, inset.length === 3, i, true)));
+    });
     const geometry = new ConvexGeometry(bevelPoints);
     const bodyPositions = geometry.getAttribute("position");
     geometry.setAttribute("uv", new THREE.Float32BufferAttribute(Array.from({ length: bodyPositions.count }, (_, i) => [bodyPositions.getX(i), bodyPositions.getY(i)]).flat(), 2));
-    const body = new THREE.Mesh(geometry, this.surface); body.castShadow = true; this.die.add(body); original.dispose();
+    const body = new THREE.Mesh(geometry, this.surface); body.castShadow = true; this.die.add(body);
   }
 
   private orientation(face: number) {
     const index = face % this.normals.length;
     const normal = this.normals[index]!, up = this.ups[index]!;
     const basis = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(up.clone().cross(normal).normalize(), up, normal));
-    const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.isCube ? 0.32 : 0.04, this.isCube ? -0.42 : -0.06, -0.04));
+    const prism = this.normals.length <= 3 || this.normals.length === 6 || this.normals.length % 2 === 1;
+    const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.isCube ? .32 : prism ? .25 : .04, this.isCube ? -.42 : prism ? -.35 : -.06, -.04));
     return this.camera.quaternion.clone().multiply(tilt).multiply(basis.invert());
   }
 
   show(face: number, label: string) {
-    this.inspection.reset(); this.idleAnchorY = 0;
+    this.inertia.stop(); this.inspection.reset(); this.idleAnchorY = 0;
     if (this.renderer) { this.rest.copy(this.orientation(face)); this.die.quaternion.copy(this.rest); this.draw(); }
     else { const fallback = this.container.querySelector(".dice-fallback"); if (fallback) fallback.textContent = label; }
   }
@@ -240,7 +241,7 @@ export class Dice {
       this.container.tabIndex = 0;
       this.container.setAttribute("aria-description", "Drag or use arrow keys to inspect the dice. This does not roll.");
     } else {
-      this.cancelPointer(); this.inspection.reset();
+      this.cancelPointer(); this.inertia.stop(); this.inspection.reset();
       this.container.removeAttribute("tabindex"); this.container.removeAttribute("aria-description");
     }
   }
@@ -257,6 +258,7 @@ export class Dice {
     if (!this.inspectable || this.rolling || !event.isPrimary || event.button !== 0 || this.inspection.pointer !== null) return;
     event.preventDefault();
     this.rest.copy(this.die.quaternion); this.idleAnchorY = this.die.position.y;
+    this.inertia.begin(performance.now());
     this.inspection.begin(event.pointerId, performance.now()); this.pointerX = event.clientX; this.pointerY = event.clientY;
     this.renderer!.domElement.setPointerCapture(event.pointerId);
     this.renderer!.domElement.classList.add("dragging"); this.start();
@@ -267,18 +269,22 @@ export class Dice {
     event.preventDefault();
     const rect = this.container.getBoundingClientRect();
     const scale = Math.PI * 1.4 / Math.max(100, Math.min(rect.width, rect.height));
-    this.rotate((event.clientX - this.pointerX) * scale, (event.clientY - this.pointerY) * scale);
+    const x = (event.clientX - this.pointerX) * scale, y = (event.clientY - this.pointerY) * scale;
+    this.rotate(x, y); this.inertia.track(x, y, performance.now());
     this.pointerX = event.clientX; this.pointerY = event.clientY;
   };
 
   private pointerEnd = (event: PointerEvent) => {
     if (event.pointerId !== this.inspection.pointer) return;
-    this.cancelPointer(); this.inspection.end(performance.now()); this.start();
+    this.cancelPointer();
+    const now = performance.now(); this.inspection.end(now);
+    if (event.type === "pointerup" && !this.reduced.matches) this.inertia.release(now); else this.inertia.stop();
+    this.start();
   };
 
   private keyInspect = (event: KeyboardEvent) => {
     if (!this.inspectable || this.rolling || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-    event.preventDefault(); this.idleAnchorY = this.die.position.y;
+    event.preventDefault(); this.inertia.stop(); this.idleAnchorY = this.die.position.y;
     this.rotate(event.key === "ArrowLeft" ? -.18 : event.key === "ArrowRight" ? .18 : 0, event.key === "ArrowUp" ? -.18 : event.key === "ArrowDown" ? .18 : 0);
   };
 
@@ -305,6 +311,11 @@ export class Dice {
         this.die.position.set(Math.sin(p * Math.PI * 2) * (1 - p) * 0.18, Math.sin(p * Math.PI) * 0.65 + (p > .7 ? Math.abs(Math.sin((p - .7) / .3 * Math.PI * 2)) * (1 - p) * .3 : 0), 0);
       }
       if (p === 1) { this.rest.copy(rolling.target); this.die.position.set(0, 0, 0); this.rolling = undefined; rolling.resolve(); }
+    } else if (!this.reduced.matches && this.inspectable && this.inertia.active) {
+      const delta = this.inertia.step(time);
+      this.rest.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(delta.y, delta.x, 0))).normalize();
+      this.die.quaternion.copy(this.rest);
+      if (!this.inertia.active) this.inspection.resumeIdle(time);
     } else if (!this.reduced.matches) {
       const idle = this.inspection.idleBlend(time);
       this.die.position.y = this.idleAnchorY * (1 - idle) + Math.sin(time * 0.0012) * 0.045 * idle;
@@ -331,6 +342,7 @@ export class Dice {
   }
 
   private release() {
+    this.inertia.stop();
     this.cancelPointer(); this.container.removeEventListener("keydown", this.keyInspect);
     const canvas = this.renderer?.domElement;
     canvas?.removeEventListener("pointerdown", this.pointerDown);

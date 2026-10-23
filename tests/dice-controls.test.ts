@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DiceInspection, DiceQuality } from "../web/dice-controls.js";
+import { DiceInertia, DiceInspection, DiceQuality } from "../web/dice-controls.js";
 
 describe("dice inspection", () => {
   it("pauses idle movement during dragging and for two seconds afterwards, then eases back in", () => {
@@ -11,6 +11,30 @@ describe("dice inspection", () => {
     expect(inspection.idleBlend(2550)).toBe(.5);
     expect(inspection.idleBlend(2800)).toBe(1);
     inspection.reset(); expect(inspection.pointer).toBeNull(); expect(inspection.idleBlend(0)).toBe(1);
+  });
+});
+describe("swipe momentum", () => {
+  const swipe = () => { const motion = new DiceInertia(); motion.begin(0); motion.track(.2, .1, 20); motion.release(20); return motion; };
+  it("continues the swipe direction and slows gradually instead of stopping at release", () => {
+    const motion = swipe();
+    const early = motion.step(40), later = motion.step(60);
+    expect(early.x).toBeGreaterThan(0); expect(early.y).toBeGreaterThan(0);
+    expect(later.x).toBeLessThan(early.x); expect(later.y).toBeLessThan(early.y);
+    for (let now = 80; now < 5000; now += 20) motion.step(now);
+    expect(motion.active).toBe(false);
+  });
+  it("integrates consistently at different frame rates", () => {
+    const travel = (step: number) => { const motion = swipe(); let x = 0; for (let now = 20 + step; now <= 1020; now += step) x += motion.step(now).x; return x; };
+    expect(travel(10)).toBeCloseTo(travel(20), 8);
+  });
+  it("does not fling after holding still, cancellation, or a new drag", () => {
+    const motion = swipe(); motion.stop(); expect(motion.step(40)).toEqual({ x: 0, y: 0 });
+    motion.begin(40); motion.track(.2, 0, 60); expect(motion.release(300)).toBe(false);
+    motion.begin(400); expect(motion.release(420)).toBe(false);
+  });
+  it("can blend into idle immediately after coasting rather than pausing again", () => {
+    const inspection = new DiceInspection(); inspection.end(0); inspection.resumeIdle(3000);
+    expect(inspection.idleBlend(3000)).toBe(0); expect(inspection.idleBlend(3250)).toBe(.5); expect(inspection.idleBlend(3500)).toBe(1);
   });
 });
 describe("dice rendering quality", () => {

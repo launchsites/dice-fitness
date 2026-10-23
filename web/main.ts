@@ -105,12 +105,17 @@ function render() {
     const exercise = roll ? exerciseOf(roll.exerciseKey) : result ? exerciseOf(result.exerciseKey) : null;
     const labels = exercise ? Array.from({ length: 6 }, (_, i) => amount(exercise.options.length === 6 ? exercise.options[i]! : exercise.options[Math.floor(i / 2)]!)) : eligible().map((item) => item.name);
     const signature = JSON.stringify([!!exercise, labels]);
-    if (dice) {
+    if (!labels.length) {
+      dice?.dispose(); dice = undefined; diceSignature = "";
+      stage.dataset.faceCount = "0"; stage.innerHTML = '<span class="dice-unavailable">No activities</span>';
+    } else if (dice) {
       if (signature === diceSignature) dice.mount(stage); else dice.update(stage, labels, !!exercise);
     } else dice = new Dice(stage, labels, !!exercise);
-    diceSignature = signature;
-    if (result) dice.show(result.diceResult - 1, amount(result));
-    dice.setInspectable(!busy && !result && !modal);
+    if (dice) {
+      diceSignature = signature;
+      if (result) dice.show(result.diceResult - 1, amount(result));
+      dice.setInspectable(!busy && !result && !modal);
+    }
   } else { dice?.dispose(); dice = undefined; diceSignature = ""; }
   if (modal) {
     const inputs = [...document.querySelectorAll<HTMLInputElement>("dialog input")];

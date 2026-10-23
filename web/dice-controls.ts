@@ -5,8 +5,46 @@ export class DiceInspection {
   begin(pointer: number, now: number) { this.pointer = pointer; this.lastInput = now; }
   touch(now: number) { this.lastInput = now; }
   end(now: number) { this.pointer = null; this.lastInput = now; }
+  resumeIdle(now: number) { this.pointer = null; this.lastInput = now - 2000; }
   reset() { this.pointer = null; this.lastInput = -Infinity; }
   idleBlend(now: number) { return this.pointer !== null ? 0 : Math.max(0, Math.min(1, (now - this.lastInput - 2000) / 500)); }
+}
+
+/** Frame-rate-independent angular momentum, kept entirely outside game state. */
+export class DiceInertia {
+  private x = 0;
+  private y = 0;
+  private lastMove = 0;
+  private lastFrame = 0;
+  active = false;
+  begin(now: number) { this.stop(); this.lastMove = now; }
+  track(x: number, y: number, now: number) {
+    if (![x, y, now].every(Number.isFinite)) return;
+    const elapsed = now - this.lastMove;
+    const seconds = Math.max(8, Math.min(100, elapsed)) / 1000;
+    const blend = elapsed > 100 ? 1 : .65;
+    this.x += (x / seconds - this.x) * blend;
+    this.y += (y / seconds - this.y) * blend;
+    const scale = Math.min(1, 12 / Math.max(.001, Math.hypot(this.x, this.y)));
+    this.x *= scale; this.y *= scale; this.lastMove = now;
+  }
+  release(now: number) {
+    this.active = now - this.lastMove < 100 && Math.hypot(this.x, this.y) > .025;
+    this.lastFrame = now;
+    if (!this.active) this.stop();
+    return this.active;
+  }
+  step(now: number) {
+    if (!this.active) return { x: 0, y: 0 };
+    const seconds = Math.max(0, Math.min(.05, (now - this.lastFrame) / 1000));
+    this.lastFrame = now;
+    const damping = Math.exp(-2.2 * seconds);
+    const result = { x: this.x * (1 - damping) / 2.2, y: this.y * (1 - damping) / 2.2 };
+    this.x *= damping; this.y *= damping;
+    if (Math.hypot(this.x, this.y) < .025) this.stop();
+    return result;
+  }
+  stop() { this.x = this.y = 0; this.active = false; }
 }
 
 /** Native screen resolution within a bounded pixel budget, with sustained-load fallback. */

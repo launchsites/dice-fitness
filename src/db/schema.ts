@@ -26,9 +26,10 @@ export const completionBatches = pgTable("completion_batches", {
 export const assignments = pgTable("assignments", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
   targetPlayerId: integer("target_player_id").notNull().references(() => players.id), operatorPlayerId: integer("operator_player_id").notNull().references(() => players.id),
-  exerciseKey: text("exercise_key").notNull(), measurement: text("measurement", { enum: ["reps", "seconds"] }).notNull(), amount: integer("amount").notNull(), diceResult: integer("dice_result").notNull(),
+  exerciseKey: text("exercise_key").notNull(), measurement: text("measurement", { enum: ["reps", "seconds"] }).notNull(), amount: integer("amount").notNull(), diceResult: integer("dice_result"),
+  entryType: text("entry_type", { enum: ["roll", "manual", "import"] }).notNull().default("roll"), entryRequestId: uuid("entry_request_id"),
   gameDate: date("game_date").notNull(), assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(), completedAt: timestamp("completed_at", { withTimezone: true }), completionBatchId: integer("completion_batch_id").references(() => completionBatches.id), undoneAt: timestamp("undone_at", { withTimezone: true }), undoneByPlayerId: integer("undone_by_player_id").references(() => players.id),
-});
+}, (table) => [uniqueIndex("assignments_entry_request_unique").on(table.entryRequestId)]);
 export const dailyBoards = pgTable("daily_boards", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id), gameDate: date("game_date").notNull(), telegramMessageId: integer("telegram_message_id"), createdAt,
 }, (table) => [uniqueIndex("daily_boards_group_date_unique").on(table.groupId, table.gameDate)]);
@@ -43,6 +44,7 @@ export const appRolls = pgTable("app_rolls", {
   targetPlayerId: integer("target_player_id").notNull().references(() => players.id),
   exerciseKey: text("exercise_key").notNull(),
   injuryFilters: jsonb("injury_filters").$type<string[]>().notNull().default([]),
+  exerciseExclusions: jsonb("exercise_exclusions").$type<string[]>().notNull().default([]),
   assignmentId: integer("assignment_id").references(() => assignments.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

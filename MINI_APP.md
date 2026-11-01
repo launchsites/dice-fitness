@@ -8,6 +8,10 @@ The Roll screen fits the viewport without page scrolling: player, injury control
 
 An unfinished roll resumes after reload; its activity and player stay locked until the amount is rolled. Repeated finalization requests return the same assignment. Injury choices belong only to that roll, reset for the next one, and are never saved to a player's profile. The compact injury sheet describes excluded movements. These are movement exclusions, not a medical assessment.
 
+**Exclude exercises** in that sheet manually removes checked activities from the draw. These combine with injury exclusions, persist with an unfinished roll, and reset after completion. The server and die use the same remaining set; excluding every activity disables rolling.
+
+Each person's **+ Add** button in Owed opens a manual entry sheet. Choose an exercise and a preset or custom whole amount (1-10000), in reps or seconds. Entries are tagged `manual`, record the acting player, and have no dice result. The unique request ID makes retries harmless. The existing remove/complete controls work for these entries too. Sit-ups has the approved 20/30/40-rep presets.
+
 **Owed** shows each player's individual exercises. The tick beside an exercise completes only that exact assignment, in any order. The undo arrow opens a confirmation to dismiss that exact owed roll without completion credit. Any active group member can dismiss an owed item; completed exercises cannot be dismissed. Dismissal is soft undo with the acting player's ID and timestamp, not deletion. Both actions are retry-safe and serialize against each other. Long lists scroll inside the Owed screen while the two-tab navigation remains visible, and completing or dismissing an item preserves the list position. Entering Owed or tapping its refresh button fetches the latest state. There is no bulk-complete, history or leaderboard screen in the app; underlying audit history and legacy chat operations remain intact.
 
 Dice use Three.js rounded/chamfered geometry, physical white materials, a subtle procedural surface texture, room reflections and feathered contact shadows. Motion eases through a tumble, bounce and settle; reduced-motion users receive a short transition. Ordinary busy states retain the renderer rather than resetting it, and animation pauses while the app is hidden.
@@ -39,11 +43,13 @@ New environment settings:
 
 ## Security and recovery
 
-Every API request checks the original signed Telegram `initData`, its age, group membership, and active-player status. No browser-supplied user identity, option amount or random outcome is trusted. Targets belong to the configured group. Bodies are bounded, responses use no-store, and per-user request limits apply.
+Every API request checks the original signed Telegram `initData`, its age, group membership, and active-player status. No browser-supplied user identity or random outcome is trusted. Rolled amounts are server-selected; manual amounts are validated separately, never disguised as rolls. Targets belong to the configured group. Bodies are bounded, responses use no-store, and per-user request limits apply.
 
 The `app_rolls` table saves each pending choice and roll-specific injury filters. Transactions, advisory locks and a unique unfinished roll per operator prevent duplicate assignments and concurrent completion races. The original assignments/completion-batch tables still hold all history. Telegram projections edit the same leaderboard, ignore unchanged-content errors, serialize updates, and retry failed edits every 30 seconds. A failed projection does not invalidate a saved roll.
 
 Keep one long-polling bot replica. Migrations run before HTTP/polling startup. Docker checks `/health`.
+
+The CLI-only `replace-debt.js plan <targetTelegramId> <operatorTelegramId>` reports only the target's owed queue and an exact fingerprint. After an approved target-only backup, `apply <targetTelegramId> <operatorTelegramId> <fingerprint> <batchUUID>` dismisses that queue without completion credit and creates 40 imported entries across the five configured core exercises. Old rows are retained. Eight entries per exercise cover every preset, with additional random amounts and shuffled order. It refuses a changed snapshot or unfinished target roll, verifies preserved records, and makes retries of the same batch harmless. There is no bulk replacement API endpoint.
 
 ## Development and verification
 

@@ -146,4 +146,84 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     const saved = (await database.pool.query("SELECT completed_at,undone_at FROM assignments WHERE id=$1", [row.id])).rows[0];
     expect(Boolean(saved.completed_at) !== Boolean(saved.undone_at)).toBe(true);
   });
+  it("adds one manual assignment under repeated requests, with audit metadata and no die value", async () => {
+    const body = { id: randomUUID(), targetPlayerId: target.id, exerciseKey: "crunches", amount: 17, measurement: "reps" };
+    const before = (await game.outstandingAssignments(group, target.id)).length;
+    const post = (value = body, userId = 1001) => fetch(base + "/api/assignments", { method: "POST", headers: { Authorization: auth(userId), "Content-Type": "application/json" }, body: JSON.stringify(value) });
+    const results = await Promise.all(Array.from({ length: 8 }, () => post()));
+    const rows = await Promise.all(results.map(async (response) => { expect(response.status).toBe(200); return (await response.json()).assignment; }));
+    expect(new Set(rows.map((row) => row.id)).size).toBe(1);
+    expect(rows[0]).toMatchObject({ entryType: "manual", entryRequestId: body.id, diceResult: null, amount: 17, operatorPlayerId: operator.id, completedAt: null });
+    expect((await game.outstandingAssignments(group, target.id)).length).toBe(before + 1);
+    expect((await post({ ...body, amount: 18 })).status).toBe(409);
+    expect((await post(body, 1002)).status).toBe(409);
+    await app.dismissAppAssignment(operator, rows[0].id);
+    const retry = await post(); expect((await retry.json()).assignment.undoneAt).toBeTruthy();
+    expect((await game.outstandingAssignments(group, target.id)).length).toBe(before);
+  });
+  it("rejects invalid manual additions and foreign targets without creating rows", async () => {
+    const before = (await database.pool.query("SELECT count(*)::int AS count FROM assignments")).rows[0].count;
+    for (const extra of [{ amount: 0 }, { amount: 1.5 }, { amount: 10001 }, { exerciseKey: "unknown" }, { measurement: "minutes" }, { id: "invalid" }]) {
+      const response = await fetch(base + "/api/assignments", { method: "POST", headers: { Authorization: auth(), "Content-Type": "application/json" }, body: JSON.stringify({ id: randomUUID(), targetPlayerId: target.id, exerciseKey: "crunches", amount: 20, measurement: "reps", ...extra }) });
+      expect(response.status).toBe(400);
+    }
+    const foreign = await fetch(base + "/api/assignments", { method: "POST", headers: { Authorization: auth(), "Content-Type": "application/json" }, body: JSON.stringify({ id: randomUUID(), targetPlayerId: 99999, exerciseKey: "crunches", amount: 20, measurement: "reps" }) });
+    expect(foreign.status).toBe(409);
+    expect((await database.pool.query("SELECT count(*)::int AS count FROM assignments")).rows[0].count).toBe(before);
+  });
+  it("serializes a conflicting manual request ID across different group members", async () => {
+    const request = { id: randomUUID(), targetPlayerId: target.id, exerciseKey: "crunches", amount: 20, measurement: "reps", diceResult: 6, entryType: "roll" };
+    const responses = await Promise.all([1001, 1002].map((id) => fetch(base + "/api/assignments", { method: "POST", headers: { Authorization: auth(id), "Content-Type": "application/json" }, body: JSON.stringify(request) })));
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const rows = (await database.pool.query("SELECT * FROM assignments WHERE entry_request_id=$1", [request.id])).rows;
+    expect(rows).toHaveLength(1); expect(rows[0].entry_type).toBe("manual"); expect(rows[0].dice_result).toBeNull();
+    await app.dismissAppAssignment(operator, rows[0].id);
+  });
+  it("persists manual exclusions across an unfinished roll and clears them for the next roll", async () => {
+    const { EXERCISES } = await import("../src/config/exercises.js");
+    const exclusions = EXERCISES.filter((item) => item.key !== "dead-bugs").map((item) => item.key);
+    const pending = await app.beginRoll(operator, { id: randomUUID(), targetPlayerId: target.id, injuryFilters: [], exerciseExclusions: exclusions });
+    expect(pending.exerciseKey).toBe("dead-bugs"); expect(pending.exerciseExclusions).toEqual([...exclusions].sort());
+    const resumed = await app.beginRoll(operator, { id: randomUUID(), targetPlayerId: operator.id, injuryFilters: [], exerciseExclusions: [] });
+    expect(resumed.id).toBe(pending.id); expect(resumed.exerciseExclusions).toEqual(pending.exerciseExclusions);
+    await app.finishRoll(operator, pending.id);
+    await expect(app.beginRoll(operator, { id: randomUUID(), targetPlayerId: target.id, injuryFilters: [], exerciseExclusions: ["unknown"] })).rejects.toThrow("valid exercises");
+    await expect(app.beginRoll(operator, { id: randomUUID(), targetPlayerId: target.id, injuryFilters: [], exerciseExclusions: EXERCISES.map((item) => item.key) })).rejects.toThrow("exclude every");
+    const next = await app.beginRoll(operator, { id: randomUUID(), targetPlayerId: target.id, injuryFilters: [], exerciseExclusions: [] });
+    expect(next.exerciseExclusions).toEqual([]); await app.finishRoll(operator, next.id);
+  });
+  it("replaces only the target's owed debt with forty valid core entries, preserving history and retry safety", async () => {
+    const maintenance = await import("../src/services/debt-maintenance.js");
+    const snapshot = await maintenance.debtSnapshot(1002, 1001);
+    const batch = randomUUID();
+    const foreignBefore = (await database.pool.query("SELECT * FROM assignments WHERE group_id <> $1 ORDER BY id", [group])).rows;
+    const result = await maintenance.replaceCoreDebt(1002, 1001, snapshot.fingerprint, batch);
+    expect(result).toMatchObject({ alreadyApplied: false, owedCount: 40, preservedDataUnchanged: true });
+    expect(result.byExercise!.every((item) => item.count === 8)).toBe(true);
+    for (const key of maintenance.REPLACEMENT_EXERCISES) expect(new Set(result.entries!.filter((row) => row.exerciseKey === key).map((row) => `${row.amount}:${row.measurement}`)).size).toBe(3);
+    const rows = await game.outstandingAssignments(group, target.id);
+    expect(rows).toHaveLength(40);
+    const { exerciseForKey, optionForDice } = await import("../src/config/exercises.js");
+    for (const row of rows) expect({ amount: row.amount, measurement: row.measurement }).toEqual(optionForDice(exerciseForKey(row.exerciseKey), row.diceResult!));
+    const original = await database.pool.query("SELECT * FROM assignments WHERE id=ANY($1::int[])", [snapshot.owedIds]);
+    expect(original.rows).toHaveLength(snapshot.owedIds.length);
+    expect(original.rows.every((row) => row.undone_at && !row.completed_at)).toBe(true);
+    const after = await maintenance.debtSnapshot(1002, 1001);
+    expect(after.preservedFingerprint).not.toBe(snapshot.preservedFingerprint); // Includes now-dismissed rows.
+    const allCount = (await database.pool.query("SELECT count(*)::int AS count FROM assignments")).rows[0].count;
+    expect(await maintenance.replaceCoreDebt(1002, 1001, snapshot.fingerprint, batch)).toMatchObject({ alreadyApplied: true, owedCount: 40 });
+    expect((await database.pool.query("SELECT count(*)::int AS count FROM assignments")).rows[0].count).toBe(allCount);
+    expect((await database.pool.query("SELECT * FROM assignments WHERE group_id <> $1 ORDER BY id", [group])).rows).toEqual(foreignBefore);
+  });
+  it("refuses a stale debt snapshot or unfinished target roll before changing any data", async () => {
+    const maintenance = await import("../src/services/debt-maintenance.js");
+    const snapshot = await maintenance.debtSnapshot(1002, 1001);
+    await app.addManualAssignment(operator, { id: randomUUID(), targetPlayerId: target.id, exerciseKey: "crunches", amount: 20, measurement: "reps" });
+    await expect(maintenance.replaceCoreDebt(1002, 1001, snapshot.fingerprint, randomUUID())).rejects.toThrow("Debt changed");
+    const fresh = await maintenance.debtSnapshot(1002, 1001);
+    const pending = await app.beginRoll(operator, { id: randomUUID(), targetPlayerId: target.id, injuryFilters: [] });
+    await expect(maintenance.replaceCoreDebt(1002, 1001, fresh.fingerprint, randomUUID())).rejects.toThrow("unfinished roll");
+    expect((await maintenance.debtSnapshot(1002, 1001)).fingerprint).toBe(fresh.fingerprint);
+    await app.finishRoll(operator, pending.id);
+  });
 });

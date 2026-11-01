@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eligibleExercises, INJURY_FILTERS, parseInjuryFilters } from "../src/config/injuries.js";
+import { eligibleExercises, INJURY_FILTERS, parseExerciseExclusions, parseInjuryFilters } from "../src/config/injuries.js";
 import { EXERCISES } from "../src/config/exercises.js";
 
 describe("per-roll injury exclusions", () => {
@@ -22,5 +22,14 @@ describe("per-roll injury exclusions", () => {
     expect(() => parseInjuryFilters(["unknown"])).toThrow();
     expect(() => parseInjuryFilters("knee")).toThrow();
     expect(parseInjuryFilters(["knee", "knee"])).toEqual(["knee"]);
+  });
+  it("combines explicit exercise exclusions with injury exclusions", () => {
+    const keys = eligibleExercises(["knee"], ["crunches", "sit-ups"]).map((exercise) => exercise.key);
+    expect(keys).not.toContain("squats"); expect(keys).not.toContain("crunches"); expect(keys).not.toContain("sit-ups");
+    expect(keys).toContain("dead-bugs");
+    expect(eligibleExercises([], EXERCISES.map((item) => item.key))).toEqual([]);
+    expect(parseExerciseExclusions(["crunches", "crunches"])).toEqual(["crunches"]);
+    expect(parseExerciseExclusions()).toEqual([]);
+    for (const value of [null, "crunches", ["unknown"]]) expect(() => parseExerciseExclusions(value)).toThrow();
   });
 });

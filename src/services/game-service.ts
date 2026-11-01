@@ -5,7 +5,7 @@ import type { MeasurementType } from "../config/exercises.js";
 import { gameDate, now } from "../utils/time.js";
 
 export type Player = { id: number; telegramUserId: number; displayName: string; username: string | null; active: boolean };
-export type Assignment = { id: number; targetPlayerId: number; operatorPlayerId: number; exerciseKey: string; measurement: MeasurementType; amount: number; diceResult: number; gameDate: string; assignedAt: Date; completedAt: Date | null; undoneAt: Date | null };
+export type Assignment = { id: number; targetPlayerId: number; operatorPlayerId: number; exerciseKey: string; measurement: MeasurementType; amount: number; diceResult: number | null; entryType?: "roll" | "manual" | "import"; entryRequestId?: string | null; gameDate: string; assignedAt: Date; completedAt: Date | null; undoneAt: Date | null };
 
 export async function ensureGroup(groupId: number): Promise<void> {
   await db.insert(groups).values({ id: groupId }).onConflictDoNothing();

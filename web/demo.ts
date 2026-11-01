@@ -1,14 +1,16 @@
 import { EXERCISES, optionForDice } from "../src/config/exercises.js";
 import { INJURY_FILTERS, eligibleExercises } from "../src/config/injuries.js";
+import { manualEntryValues } from "../src/config/manual-entry.js";
 import type { State, Assignment, Roll } from "./types.js";
 
 const now = new Date().toISOString();
+const rollMetadata = { entryType: "roll" as const, entryRequestId: null };
 let nextId = 4;
 let pending: Roll | null = null;
 const history: Assignment[] = [
-  { id: 3, groupId: -1, targetPlayerId: 2, operatorPlayerId: 1, exerciseKey: "squat-jumps", measurement: "reps", amount: 20, diceResult: 3, gameDate: now.slice(0, 10), assignedAt: now, completedAt: null, completionBatchId: null, undoneAt: null, undoneByPlayerId: null },
-  { id: 2, groupId: -1, targetPlayerId: 1, operatorPlayerId: 1, exerciseKey: "walking-lunges", measurement: "seconds", amount: 60, diceResult: 5, gameDate: now.slice(0, 10), assignedAt: now, completedAt: null, completionBatchId: null, undoneAt: null, undoneByPlayerId: null },
-  { id: 1, groupId: -1, targetPlayerId: 2, operatorPlayerId: 1, exerciseKey: "push-ups", measurement: "reps", amount: 30, diceResult: 6, gameDate: now.slice(0, 10), assignedAt: now, completedAt: now, completionBatchId: 1, undoneAt: null, undoneByPlayerId: null },
+  { ...rollMetadata, id: 3, groupId: -1, targetPlayerId: 2, operatorPlayerId: 1, exerciseKey: "squat-jumps", measurement: "reps", amount: 20, diceResult: 3, gameDate: now.slice(0, 10), assignedAt: now, completedAt: null, completionBatchId: null, undoneAt: null, undoneByPlayerId: null },
+  { ...rollMetadata, id: 2, groupId: -1, targetPlayerId: 1, operatorPlayerId: 1, exerciseKey: "walking-lunges", measurement: "seconds", amount: 60, diceResult: 5, gameDate: now.slice(0, 10), assignedAt: now, completedAt: null, completionBatchId: null, undoneAt: null, undoneByPlayerId: null },
+  { ...rollMetadata, id: 1, groupId: -1, targetPlayerId: 2, operatorPlayerId: 1, exerciseKey: "push-ups", measurement: "reps", amount: 30, diceResult: 6, gameDate: now.slice(0, 10), assignedAt: now, completedAt: now, completionBatchId: 1, undoneAt: null, undoneByPlayerId: null },
 ];
 export async function demoRequest(path: string, body?: Record<string, unknown>): Promise<unknown> {
   await new Promise((resolve) => setTimeout(resolve, 160));
@@ -26,15 +28,23 @@ export async function demoRequest(path: string, body?: Record<string, unknown>):
   }
   if (path === "/api/rolls") {
     const filters = body!.injuryFilters as string[];
-    const options = eligibleExercises(filters);
-    pending ??= { id: body!.id as string, groupId: -1, operatorPlayerId: 1, targetPlayerId: body!.targetPlayerId as number, exerciseKey: options[Math.floor(Math.random() * options.length)]!.key, injuryFilters: filters, assignmentId: null, createdAt: now };
+    const exerciseExclusions = (body!.exerciseExclusions ?? []) as string[];
+    const options = eligibleExercises(filters, exerciseExclusions);
+    pending ??= { id: body!.id as string, groupId: -1, operatorPlayerId: 1, targetPlayerId: body!.targetPlayerId as number, exerciseKey: options[Math.floor(Math.random() * options.length)]!.key, injuryFilters: filters, exerciseExclusions, assignmentId: null, createdAt: now };
     return { roll: pending };
   }
   if (path.endsWith("/finish") && pending) {
     const diceResult = 1 + Math.floor(Math.random() * 6);
     const option = optionForDice(EXERCISES.find((exercise) => exercise.key === pending!.exerciseKey)!, diceResult);
-    const assignment: Assignment = { ...history[0]!, ...option, id: nextId++, targetPlayerId: pending.targetPlayerId, exerciseKey: pending.exerciseKey, diceResult, completedAt: null, assignedAt: new Date().toISOString() };
+    const assignment: Assignment = { ...history[0]!, ...rollMetadata, ...option, id: nextId++, targetPlayerId: pending.targetPlayerId, exerciseKey: pending.exerciseKey, diceResult, completedAt: null, completionBatchId: null, undoneAt: null, undoneByPlayerId: null, assignedAt: new Date().toISOString() };
     history.unshift(assignment); pending = null; return { assignment };
+  }
+  if (path === "/api/assignments") {
+    const values = manualEntryValues({ exerciseKey: body!.exerciseKey, amount: body!.amount, measurement: body!.measurement });
+    const existing = history.find((row) => row.entryRequestId === body!.id);
+    if (existing) return { assignment: existing };
+    const assignment: Assignment = { ...history[0]!, ...values, id: nextId++, targetPlayerId: body!.targetPlayerId as number, operatorPlayerId: 1, diceResult: null, entryType: "manual", entryRequestId: body!.id as string, completedAt: null, completionBatchId: null, undoneAt: null, undoneByPlayerId: null, assignedAt: new Date().toISOString() };
+    history.unshift(assignment); return { assignment };
   }
   if (path === "/api/complete") {
     let completed = 0;

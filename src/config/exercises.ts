@@ -20,6 +20,7 @@ export const EXERCISES: readonly Exercise[] = [
   { key: "push-ups", name: "Push-ups", options: reps([10, 20, 30]) },
   { key: "squats", name: "Squats", options: reps([30, 40, 60]) },
   { key: "crunches", name: "Crunches", options: reps([20, 30, 40]) },
+  { key: "sit-ups", name: "Sit-ups", options: reps([20, 30, 40]) },
   { key: "squat-jumps", name: "Squat jumps", options: reps([10, 20, 30]) },
   { key: "bicycle-crunches", name: "Bicycle crunches", options: reps([20, 30, 40]) },
   { key: "dead-bugs", name: "Dead bugs", options: reps([15, 25, 35]) },

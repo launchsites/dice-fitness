@@ -4,7 +4,8 @@ import { db } from "../db/client.js";
 import { appRolls, assignments, completionBatches, groupPlayers } from "../db/schema.js";
 import { env } from "../config/env.js";
 import { EXERCISES, exerciseForKey, optionForDice } from "../config/exercises.js";
-import { eligibleExercises, INJURY_FILTERS, parseInjuryFilters } from "../config/injuries.js";
+import { eligibleExercises, INJURY_FILTERS, parseExerciseExclusions, parseInjuryFilters } from "../config/injuries.js";
+import { manualEntryValues } from "../config/manual-entry.js";
 import { gameDate } from "../utils/time.js";
 import { AppError } from "../web/errors.js";
 import { completedAssignments, listPlayers, outstandingAssignments, type Player } from "./game-service.js";
@@ -43,10 +44,10 @@ export async function appState(operator: Player) {
   return { me: { id: operator.id, name: operator.displayName }, players: playerState, exercises: EXERCISES, injuries: INJURY_FILTERS, history, pending: pending[0] ?? null, lastRoll: latest[0] ?? null };
 }
 
-export async function beginRoll(operator: Player, request: { id: string; targetPlayerId: number; injuryFilters: unknown }) {
-  let filters: string[];
-  try { filters = parseInjuryFilters(request.injuryFilters); } catch (error) { throw new AppError(400, (error as Error).message); }
-  const eligible = eligibleExercises(filters);
+export async function beginRoll(operator: Player, request: { id: string; targetPlayerId: number; injuryFilters: unknown; exerciseExclusions?: unknown }) {
+  let filters: string[], exerciseExclusions: string[];
+  try { filters = parseInjuryFilters(request.injuryFilters); exerciseExclusions = parseExerciseExclusions(request.exerciseExclusions); } catch (error) { throw new AppError(400, (error as Error).message); }
+  const eligible = eligibleExercises(filters, exerciseExclusions);
   if (!eligible.length) throw new AppError(400, "These filters exclude every activity. Change the filters before rolling.");
   return db.transaction(async (tx) => {
     await operatorLock(tx, operator.id);
@@ -59,9 +60,27 @@ export async function beginRoll(operator: Player, request: { id: string; targetP
     if (pending) return pending;
     await activeTarget(tx, request.targetPlayerId);
     const exercise = eligible[randomInt(eligible.length)]!;
-    const [roll] = await tx.insert(appRolls).values({ id: request.id, groupId, operatorPlayerId: operator.id, targetPlayerId: request.targetPlayerId, exerciseKey: exercise.key, injuryFilters: filters }).returning();
+    const [roll] = await tx.insert(appRolls).values({ id: request.id, groupId, operatorPlayerId: operator.id, targetPlayerId: request.targetPlayerId, exerciseKey: exercise.key, injuryFilters: filters, exerciseExclusions }).returning();
     if (!roll) throw new Error("Roll creation failed");
     return roll;
+  });
+}
+
+/** A correction entered by a group member, not a fabricated die result. */
+export async function addManualAssignment(operator: Player, request: { id: string; targetPlayerId: number; exerciseKey: unknown; amount: unknown; measurement: unknown }) {
+  let values: ReturnType<typeof manualEntryValues>;
+  try { values = manualEntryValues(request); } catch (error) { throw new AppError(400, (error as Error).message); }
+  return db.transaction(async (tx) => {
+    await operatorLock(tx, operator.id);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`dice:entry:${request.id}`}, 0))`);
+    const [existing] = await tx.select().from(assignments).where(eq(assignments.entryRequestId, request.id));
+    if (existing) {
+      if (existing.groupId !== groupId || existing.operatorPlayerId !== operator.id || existing.targetPlayerId !== request.targetPlayerId || existing.entryType !== "manual" || existing.exerciseKey !== values.exerciseKey || existing.amount !== values.amount || existing.measurement !== values.measurement) throw new AppError(409, "This entry request was already used. Reopen Add exercise.");
+      return existing;
+    }
+    await targetLock(tx, request.targetPlayerId); await activeTarget(tx, request.targetPlayerId);
+    const [row] = await tx.insert(assignments).values({ groupId, operatorPlayerId: operator.id, targetPlayerId: request.targetPlayerId, ...values, diceResult: null, entryType: "manual", entryRequestId: request.id, gameDate: gameDate() }).returning();
+    return row!;
   });
 }
 

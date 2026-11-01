@@ -7,7 +7,7 @@ import { logger } from "../logger.js";
 import { verifyInitData } from "./auth.js";
 import { AppError } from "./errors.js";
 import { addPlayer, getPlayer, type Player } from "../services/game-service.js";
-import { appState, beginRoll, completeAppAssignments, dismissAppAssignment, finishRoll, undoAppAssignment } from "../services/app-service.js";
+import { addManualAssignment, appState, beginRoll, completeAppAssignments, dismissAppAssignment, finishRoll, undoAppAssignment } from "../services/app-service.js";
 import { refreshLeaderboard } from "../services/projection-service.js";
 
 const root = resolve("web-dist");
@@ -81,8 +81,14 @@ export function createAppServer(bot: Bot) {
         if (pathname === "/api/rolls") {
           limit(`roll:${operator.id}`, 12);
           if (typeof data.id !== "string" || !uuid.test(data.id) || !positiveInt(data.targetPlayerId)) throw new AppError(400, "Invalid roll request.");
-          const roll = await beginRoll(operator, { id: data.id, targetPlayerId: data.targetPlayerId, injuryFilters: data.injuryFilters });
+          const roll = await beginRoll(operator, { id: data.id, targetPlayerId: data.targetPlayerId, injuryFilters: data.injuryFilters, exerciseExclusions: data.exerciseExclusions });
           json(res, 200, { roll }); return;
+        }
+        if (pathname === "/api/assignments") {
+          limit(`manual:${operator.id}`, 30);
+          if (typeof data.id !== "string" || !uuid.test(data.id) || !positiveInt(data.targetPlayerId)) throw new AppError(400, "Invalid manual entry request.");
+          const assignment = await addManualAssignment(operator, { id: data.id, targetPlayerId: data.targetPlayerId, exerciseKey: data.exerciseKey, amount: data.amount, measurement: data.measurement });
+          await project(); json(res, 200, { assignment }); return;
         }
         const finish = /^\/api\/rolls\/([0-9a-f-]+)\/finish$/i.exec(pathname);
         if (finish && uuid.test(finish[1]!)) {

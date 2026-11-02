@@ -13,6 +13,9 @@ let operator: Awaited<ReturnType<typeof import("../src/services/game-service.js"
 let target: typeof operator;
 let server: Server;
 let base: string;
+let botApi: import("grammy").Api;
+let profileLookups = 0, avatarDownloads = 0;
+const avatarPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
 
 function auth(id = 1001) {
   const values = { auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id, first_name: "Test" }) };
@@ -34,11 +37,14 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     operator = await game.addPlayer(group, { id: 1001, first_name: "Test operator" });
     target = await game.addPlayer(group, { id: 1002, first_name: "Test target" });
     const { Bot } = await import("grammy"); const bot = new Bot(token);
+    botApi = bot.api;
     bot.api.config.use(async (_previous, method, payload) => {
-      if (method === "getChatMember") return { ok: true, result: { status: (payload as { user_id: number }).user_id === 9999 ? "left" : "member", user: { id: 1001, is_bot: false, first_name: "Test" } } };
+      if (method === "getChatMember") return { ok: true, result: { status: (payload as { user_id: number }).user_id === 9999 ? "left" : (payload as { user_id: number }).user_id === 1001 ? "administrator" : "member", user: { id: 1001, is_bot: false, first_name: "Test" } } };
+      if (method === "getUserProfilePhotos") { profileLookups++; return { ok: true, result: { total_count: (payload as { user_id: number }).user_id === 1001 ? 1 : 0, photos: (payload as { user_id: number }).user_id === 1001 ? [[{ file_id: "test-photo", file_unique_id: "unique-photo", width: 160, height: 160 }]] : [] } }; }
+      if (method === "getFile") return { ok: true, result: { file_id: "test-photo", file_unique_id: "unique-photo", file_path: "photos/test.png" } };
       return { ok: true, result: true };
     });
-    const { createAppServer } = await import("../src/web/server.js"); server = createAppServer(bot);
+    const { createAppServer } = await import("../src/web/server.js"); server = createAppServer(bot, { avatarDownload: async () => { avatarDownloads++; return new Response(avatarPng, { headers: { "Content-Type": "image/png" } }); } });
     server.listen(0, "127.0.0.1"); await once(server, "listening");
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   });
@@ -245,5 +251,35 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     expect((await get("from=2026-07-03T12:00&to=2026-07-03T12:59")).entries).toHaveLength(0);
     expect((await fetch(base + "/api/history")).status).toBe(401);
     for (const bad of ["playerId=999999", "from=invalid", "cursor=bad", "from=2026-07-04&to=2026-07-03"]) expect((await fetch(base + "/api/history?" + bad, { headers: { Authorization: auth() } })).status).toBe(400);
+  });
+  it("serves cached Telegram photo bytes only to authenticated game members without exposing file URLs", async () => {
+    const path = base + `/api/players/${operator.id}/avatar`;
+    expect((await fetch(path)).status).toBe(401);
+    expect((await fetch(path, { headers: { Authorization: auth(9999) } })).status).toBe(403);
+    const response = await fetch(path, { headers: { Authorization: auth() } });
+    expect(response.status).toBe(200); expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("location")).toBeNull(); expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(avatarPng);
+    expect((await fetch(path, { headers: { Authorization: auth() } })).status).toBe(200);
+    expect(profileLookups).toBe(1); expect(avatarDownloads).toBe(1);
+    expect((await fetch(base + `/api/players/${target.id}/avatar`, { headers: { Authorization: auth() } })).status).toBe(404);
+    expect((await fetch(base + "/api/players/999999/avatar", { headers: { Authorization: auth() } })).status).toBe(404);
+  });
+  it("permits only a group admin to manage private photo overrides and preserves exercise records", async () => {
+    const { setPlayerAvatar } = await import("../src/services/avatar-service.js");
+    const before = (await database.pool.query("SELECT * FROM assignments ORDER BY id")).rows;
+    await expect(setPlayerAvatar(botApi, 1002, 1002, avatarPng)).rejects.toThrow("Only a group admin");
+    await expect(setPlayerAvatar(botApi, 1002, 1001, Buffer.from("<svg></svg>"))).rejects.toThrow("JPEG, PNG or WebP");
+    await expect(setPlayerAvatar(botApi, 1002, 1001, Buffer.alloc(1048577))).rejects.toThrow("smaller than 1 MB");
+    expect(await setPlayerAvatar(botApi, 1002, 1001, avatarPng)).toEqual({ player: target.displayName, override: true });
+    const path = base + `/api/players/${target.id}/avatar`;
+    const override = await fetch(path, { headers: { Authorization: auth() } });
+    expect(override.status).toBe(200); expect(Buffer.from(await override.arrayBuffer())).toEqual(avatarPng);
+    expect(avatarDownloads).toBe(1); // Override wins even after the empty Telegram result was cached.
+    expect((await database.pool.query("SELECT updated_by_player_id FROM player_avatars")).rows).toEqual([{ updated_by_player_id: operator.id }]);
+    expect(await setPlayerAvatar(botApi, 1002, 1001, null)).toEqual({ player: target.displayName, override: false });
+    expect((await fetch(path, { headers: { Authorization: auth() } })).status).toBe(404);
+    expect((await database.pool.query("SELECT * FROM assignments ORDER BY id")).rows).toEqual(before);
+    expect((await fetch(base + `/api/players/${target.id}/avatar`, { method: "POST", headers: { Authorization: auth(), "Content-Type": "application/json" }, body: "{}" })).status).toBe(404);
   });
 });

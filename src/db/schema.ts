@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, date, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, customType, date, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 const createdAt = timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 const joinedAt = timestamp("joined_at", { withTimezone: true }).notNull().defaultNow();
@@ -14,6 +14,14 @@ export const groupPlayers = pgTable("group_players", {
   id: serial("id").primaryKey(), groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
   playerId: integer("player_id").notNull().references(() => players.id), active: boolean("active").notNull().default(true), joinedAt,
 }, (table) => [uniqueIndex("group_players_group_player_unique").on(table.groupId, table.playerId)]);
+const imageBytes = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
+export const playerAvatars = pgTable("player_avatars", {
+  groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
+  playerId: integer("player_id").notNull().references(() => players.id),
+  image: imageBytes("image").notNull(), mime: text("mime").notNull(),
+  updatedByPlayerId: integer("updated_by_player_id").notNull().references(() => players.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex("player_avatars_group_player_unique").on(table.groupId, table.playerId)]);
 export const operatorPreferences = pgTable("operator_preferences", {
   groupId: bigint("group_id", { mode: "number" }).notNull().references(() => groups.id),
   operatorPlayerId: integer("operator_player_id").notNull().references(() => players.id),

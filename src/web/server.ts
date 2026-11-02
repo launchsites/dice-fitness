@@ -10,6 +10,7 @@ import { addPlayer, getPlayer, type Player } from "../services/game-service.js";
 import { addManualAssignment, appState, beginRoll, completeAppAssignments, dismissAppAssignment, finishRoll, undoAppAssignment } from "../services/app-service.js";
 import { refreshLeaderboard } from "../services/projection-service.js";
 import { completedHistory } from "../services/history-service.js";
+import { avatarReader } from "../services/avatar-service.js";
 
 const root = resolve("web-dist");
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -41,7 +42,8 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
 }
 const positiveInt = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-export function createAppServer(bot: Bot) {
+export function createAppServer(bot: Bot, options: { avatarDownload?: typeof fetch } = {}) {
+  const readAvatar = avatarReader(bot.api, options.avatarDownload);
   const members = new Map<number, number>();
   async function authenticate(req: IncomingMessage): Promise<Player> {
     const auth = req.headers.authorization;
@@ -79,6 +81,15 @@ export function createAppServer(bot: Bot) {
         const operator = await authenticate(req);
         if (pathname === "/api/state" && req.method === "GET") { json(res, 200, await appState(operator)); return; }
         if (pathname === "/api/history" && req.method === "GET") { json(res, 200, await completedHistory(url.searchParams)); return; }
+        const avatar = /^\/api\/players\/(\d+)\/avatar$/.exec(pathname);
+        if (avatar && req.method === "GET") {
+          const id = Number(avatar[1]);
+          if (!positiveInt(id)) throw new AppError(404, "Player not found.");
+          const photo = await readAvatar(id);
+          if (!photo) throw new AppError(404, "No profile photo available.");
+          res.writeHead(200, { "Content-Type": photo.mime, "Content-Length": photo.image.length, "Cache-Control": "private, no-store", Vary: "Authorization" });
+          res.end(photo.image); return;
+        }
         if (req.method !== "POST") throw new AppError(405, "Method not allowed.");
         const data = await body(req);
         if (pathname === "/api/rolls") {

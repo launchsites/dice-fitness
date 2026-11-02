@@ -16,6 +16,17 @@ Each person's **+ Add** button in Owed opens a manual entry sheet. Choose an exe
 
 **History** shows completed exercises from everyone, newest completion first, with the person, amount and recorded completion time. Entries are grouped by local day. Filter by person, Today, Yesterday, or a custom date range with optional start/end times. All calendar filters and displayed times use the game's `TZ` (Europe/London by default), including daylight-saving changes. The selected end day/minute is inclusive. Cancel leaves the applied filter unchanged; Reset restores everyone/all dates. **Load earlier** retrieves another 50 entries with a stable completion-time/ID cursor, including tied timestamps. History includes completed manual/imported exercises, excludes dismissed entries, and preserves inactive players' completed records. Filters use completion time, not roll time. These are recorded app completions, not verified video timestamps. The leaderboard remains in the chat.
 
+Each day's label sticks to the top of the feed until the next day pushes it out. Pagination merges entries into the same day group. Circular profile photos appear beside names; missing/private photos use initials. Photos load separately from the feed, so Telegram delays cannot block history. The authenticated `/api/players/<playerId>/avatar` endpoint proxies small Telegram profile-photo bytes and never returns a token-bearing download URL. Telegram photos are cached in server memory for up to one hour and briefly in the Mini App; photo failures fall back to initials.
+
+An admin can override any registered player's photo without an app settings screen:
+
+```sh
+node dist/scripts/set-avatar.js <targetTelegramId> <adminTelegramId> /private/path/photo.jpg
+node dist/scripts/set-avatar.js <targetTelegramId> <adminTelegramId> --remove
+```
+
+The CLI verifies the acting user's live group-admin status and active registration. Overrides accept JPEG, PNG or WebP under 1 MB; use a small square image. They are stored as private image bytes in `player_avatars`, alongside the database's persistent data, with the acting player's ID and update time. Overrides take precedence over Telegram photos; removal restores Telegram/initials. No public upload API or group command is added. Reopen the Mini App after changing an override. Personal photos must not be committed to the public repository.
+
 The bot does not archive ordinary group captions or videos. The Bot API cannot fetch past chat history; whether new ordinary messages are delivered depends on admin status/privacy mode. No message archiving is enabled by the History screen.
 
 Dice use Three.js rounded/chamfered geometry, physical white materials, a subtle procedural surface texture, room reflections and feathered contact shadows. Motion eases through a tumble, bounce and settle; reduced-motion users receive a short transition. Ordinary busy states retain the renderer rather than resetting it, and animation pauses while the app is hidden.

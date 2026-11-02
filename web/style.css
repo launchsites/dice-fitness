@@ -87,11 +87,20 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .history-filter-summary span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .history-filter-summary button { background: transparent; color: var(--blue); min-height: 32px; padding: 4px; }
 .history-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 20px 20px; scrollbar-width: thin; scrollbar-color: #344556 transparent; }
-.history-day { font-size: 12px; font-weight: 500; color: var(--muted); padding: 10px 2px; }
-.history-day:not(:first-child) { margin-top: 12px; }
+.history-day-group { position: relative; padding-bottom: 8px; }
+.history-day { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: center; min-height: 42px; margin: 0; padding: 6px 0; background: linear-gradient(var(--bg) 75%, #0e162100); font-size: 12px; line-height: 18px; font-weight: 600; color: #b5cadd; }
+.history-day > span { background: #203244; border: 1px solid #30495f; padding: 4px 12px; border-radius: 20px; box-shadow: 0 2px 8px #0003; }
 .history-item { border-radius: 12px; background: var(--surface); padding: 12px 14px 14px; margin-bottom: 8px; }
-.history-item-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 18px; color: var(--muted); }
-.history-item-top > span { min-width: 0; overflow-wrap: anywhere; }
+.history-item-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 18px; color: var(--muted); }
+.history-person-name { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.history-person-name > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.player-avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; position: relative; overflow: hidden; flex: none; background: #3b6c8a; color: white; font-size: 11px; font-weight: 600; line-height: 1; }
+.avatar-tone-1 { background: #64578e; }
+.avatar-tone-2 { background: #3a7c76; }
+.avatar-tone-3 { background: #946450; }
+.player-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+.player-avatar.has-image img { opacity: 1; }
+.player-avatar.has-image > span { visibility: hidden; }
 .history-item time { flex: none; font-variant-numeric: tabular-nums; }
 .history-item-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
 .history-item-main > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

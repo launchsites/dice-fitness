@@ -3,6 +3,7 @@ import { Dice } from "./dice.js";
 import { observeViewport } from "./viewport.js";
 import type { Assignment, HistoryPage, Roll, State } from "./types.js";
 import { dayInZone, emptyRange, historyQuery, rangeLabel, relativeDay, shortDay, type HistoryRange } from "./history.js";
+import { avatarMarkup, hydrateAvatars } from "./avatars.js";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const telegram = window.Telegram?.WebApp;
@@ -86,14 +87,19 @@ async function reloadActivity() {
 }
 
 function historyView() {
-  let previousDay = "";
-  const rows = historyPage.entries.map((row) => {
+  const days = new Map<string, Assignment[]>();
+  for (const row of historyPage.entries) {
     const day = dayInZone(row.completedAt!, state.timezone);
-    const heading = day !== previousDay ? `<h2 class="history-day">${escape(day === relativeDay(state.timezone) ? "Today" : day === relativeDay(state.timezone, -1) ? "Yesterday" : shortDay(day))}</h2>` : "";
-    previousDay = day;
-    const person = state.players.find((player) => player.id === row.targetPlayerId);
-    const time = new Intl.DateTimeFormat("en-GB", { timeZone: state.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(row.completedAt!));
-    return `${heading}<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><span>${escape(person?.name ?? "Former player")}</span><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div><span class="history-check" aria-label="Completed">${icon("check")}</span></div></article>`;
+    const entries = days.get(day) ?? []; entries.push(row); days.set(day, entries);
+  }
+  const rows = [...days].map(([day, entries]) => {
+    const title = day === relativeDay(state.timezone) ? "Today" : day === relativeDay(state.timezone, -1) ? "Yesterday" : shortDay(day);
+    const cards = entries.map((row) => {
+      const person = state.players.find((player) => player.id === row.targetPlayerId), name = person?.name ?? "Former player";
+      const time = new Intl.DateTimeFormat("en-GB", { timeZone: state.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(row.completedAt!));
+      return `<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><div class="history-person-name">${avatarMarkup(row.targetPlayerId, name)}<span>${escape(name)}</span></div><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div><span class="history-check" aria-label="Completed">${icon("check")}</span></div></article>`;
+    }).join("");
+    return `<section class="history-day-group" aria-labelledby="day-${day}" data-day="${day}"><h2 class="history-day" id="day-${day}"><span>${escape(title)}</span></h2>${cards}</section>`;
   }).join("");
   return `<div class="history-filters"><div class="history-person select-wrap"><label class="sr-only" for="history-person">Filter by person</label><select id="history-person" ${busy ? "disabled" : ""}><option value="0">Everyone</option>${state.players.map((player) => `<option value="${player.id}" ${player.id === historyPlayer ? "selected" : ""}>${escape(player.name)}</option>`).join("")}</select>${icon("chevron")}</div><button class="history-date ${historyRange.mode !== "all" ? "filter-active" : ""}" data-action="history-dates" aria-label="Filter by date: ${escape(rangeLabel(historyRange))}" ${busy ? "disabled" : ""}>${icon("calendar")}<span>${escape(rangeLabel(historyRange))}</span></button></div>
     ${historyPlayer || historyRange.mode !== "all" ? `<div class="history-filter-summary"><span>${escape(historyRange.mode === "custom" ? `${historyRange.from ? shortDay(historyRange.from) + (historyRange.withTimes ? ` ${historyRange.fromTime}` : "") : "Any start"} – ${historyRange.to ? shortDay(historyRange.to) + (historyRange.withTimes ? ` ${historyRange.toTime}` : "") : "Any end"}` : "Filtered history")}</span><button data-action="history-clear" ${busy ? "disabled" : ""}>Reset</button></div>` : ""}
@@ -186,6 +192,7 @@ function render() {
     const inputs = [...document.querySelectorAll<HTMLInputElement>("dialog input")];
     (inputs.find((input) => input.value === focusedFilter) ?? (focusedId ? document.getElementById(focusedId) : null) ?? document.querySelector<HTMLButtonElement>("dialog button"))?.focus();
   } else if (focusedId === "history-person") document.getElementById(focusedId)?.focus({ preventScroll: true });
+  hydrateAvatars(root, telegram?.initData ?? "", preview);
 }
 
 async function perform(work: () => Promise<void>) {

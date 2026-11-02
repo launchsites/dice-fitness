@@ -1,6 +1,6 @@
 # Dice Fitness Mini App
 
-The group has one editable leaderboard with **Open dice rolls**. The app has only **Roll** and **Owed**, in a dark Telegram-style UI. Individual assignment records and all existing totals are preserved; the leaderboard and totals stay in the chat.
+The group has one editable leaderboard with **Open dice rolls**. The app has **Roll** and **Activity**, in a dark Telegram-style UI. Activity opens on **Owed**, with **History** beside it. Individual assignment records and all existing totals are preserved; the leaderboard and totals stay in the chat.
 
 ## Flow
 
@@ -12,7 +12,11 @@ An unfinished roll resumes after reload; its activity and player stay locked unt
 
 Each person's **+ Add** button in Owed opens a manual entry sheet. Choose an exercise and a preset or custom whole amount (1-10000), in reps or seconds. Entries are tagged `manual`, record the acting player, and have no dice result. The unique request ID makes retries harmless. The existing remove/complete controls work for these entries too. Sit-ups has the approved 20/30/40-rep presets.
 
-**Owed** shows each player's individual exercises. The tick beside an exercise completes only that exact assignment, in any order. The undo arrow opens a confirmation to dismiss that exact owed roll without completion credit. Any active group member can dismiss an owed item; completed exercises cannot be dismissed. Dismissal is soft undo with the acting player's ID and timestamp, not deletion. Both actions are retry-safe and serialize against each other. Long lists scroll inside the Owed screen while the two-tab navigation remains visible, and completing or dismissing an item preserves the list position. Entering Owed or tapping its refresh button fetches the latest state. There is no bulk-complete, history or leaderboard screen in the app; underlying audit history and legacy chat operations remain intact.
+**Owed** shows each player's individual exercises. The tick beside an exercise completes only that exact assignment, in any order. The undo arrow opens a confirmation to dismiss that exact owed roll without completion credit. Any active group member can dismiss an owed item; completed exercises cannot be dismissed. Dismissal is soft undo with the acting player's ID and timestamp, not deletion. Both actions are retry-safe and serialize against each other. Long lists scroll inside the screen while navigation remains visible, and completing or dismissing an item preserves the list position. Entering Activity opens Owed and fetches the latest state.
+
+**History** shows completed exercises from everyone, newest completion first, with the person, amount and recorded completion time. Entries are grouped by local day. Filter by person, Today, Yesterday, or a custom date range with optional start/end times. All calendar filters and displayed times use the game's `TZ` (Europe/London by default), including daylight-saving changes. The selected end day/minute is inclusive. Cancel leaves the applied filter unchanged; Reset restores everyone/all dates. **Load earlier** retrieves another 50 entries with a stable completion-time/ID cursor, including tied timestamps. History includes completed manual/imported exercises, excludes dismissed entries, and preserves inactive players' completed records. Filters use completion time, not roll time. These are recorded app completions, not verified video timestamps. The leaderboard remains in the chat.
+
+The bot does not archive ordinary group captions or videos. The Bot API cannot fetch past chat history; whether new ordinary messages are delivered depends on admin status/privacy mode. No message archiving is enabled by the History screen.
 
 Dice use Three.js rounded/chamfered geometry, physical white materials, a subtle procedural surface texture, room reflections and feathered contact shadows. Motion eases through a tumble, bounce and settle; reduced-motion users receive a short transition. Ordinary busy states retain the renderer rather than resetting it, and animation pauses while the app is hidden.
 

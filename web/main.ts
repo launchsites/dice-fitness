@@ -1,7 +1,8 @@
 import "./style.css";
 import { Dice } from "./dice.js";
 import { observeViewport } from "./viewport.js";
-import type { Assignment, Roll, State } from "./types.js";
+import type { Assignment, HistoryPage, Roll, State } from "./types.js";
+import { dayInZone, emptyRange, historyQuery, rangeLabel, relativeDay, shortDay, type HistoryRange } from "./history.js";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 const telegram = window.Telegram?.WebApp;
@@ -9,6 +10,13 @@ const preview = new URLSearchParams(location.search).get("demo") === "1";
 observeViewport(telegram);
 let state: State;
 let tab: "roll" | "owed" = "roll";
+let activityTab: "owed" | "history" = "owed";
+let historyPlayer = 0;
+let historyRange = emptyRange();
+let rangeDraft: HistoryRange | null = null;
+let historyPage: HistoryPage = { entries: [], nextCursor: null };
+let historyLoaded = false;
+let historyScrollTop = 0;
 let targetId = Number(sessionStorage.getItem("dice-target")) || 0;
 let filters: string[] = [];
 let excludedExercises: string[] = [];
@@ -19,7 +27,7 @@ let requestId: string | null = sessionStorage.getItem("dice-request");
 let busy = false;
 let error = "";
 let notice = "";
-let modal: "injury" | "dismiss" | "entry" | null = null;
+let modal: "injury" | "dismiss" | "entry" | "dates" | null = null;
 let entryDraft: { id: string; targetPlayerId: number; exerciseKey: string; amount: string; measurement: "reps" | "seconds"; attempted: boolean } | null = null;
 let dismissedId = 0;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -31,7 +39,7 @@ const amount = (value: { amount: number; measurement: string }) => value.measure
 const exerciseOf = (key: string) => state.exercises.find((exercise) => exercise.key === key)!;
 const eligible = (chosen = filters, manual = excludedExercises) => state.exercises.filter((exercise) => !manual.includes(exercise.key) && !state.injuries.some((filter) => chosen.includes(filter.key) && (filter.excludes as readonly string[]).includes(exercise.key)));
 const haptic = (style = "light") => telegram?.HapticFeedback?.impactOccurred(style);
-const icon = (name: "dice" | "owed" | "check" | "chevron" | "close" | "refresh" | "undo") => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${{
+const icon = (name: "dice" | "owed" | "check" | "chevron" | "close" | "refresh" | "undo" | "calendar") => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${{
   dice: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8 8h.01M16 8h.01M12 12h.01M8 16h.01M16 16h.01" stroke-width="3"/>',
   owed: '<path d="m4 7 1.5 1.5L8 6m-4 9 1.5 1.5L8 14M12 7h8m-8 8h8"/>',
   check: '<path d="m6 12 4 4 8-8"/>',
@@ -39,6 +47,7 @@ const icon = (name: "dice" | "owed" | "check" | "chevron" | "close" | "refresh" 
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/>',
   undo: '<path d="M4 4v6h6"/><path d="M4 10a8 8 0 1 1 2.1 7.9"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18"/>',
 }[name]}</svg>`;
 
 async function api<T>(path: string, body?: Record<string, unknown>): Promise<T> {
@@ -62,6 +71,44 @@ async function load() {
   if (!roll) { requestId = null; sessionStorage.removeItem("dice-request"); }
 }
 
+async function loadHistory(append = false) {
+  const page = await api<HistoryPage>(`/api/history?${historyQuery(historyPlayer, historyRange, state.timezone, append ? historyPage.nextCursor : null)}`);
+  historyPage = append ? { ...page, entries: [...historyPage.entries, ...page.entries.filter((row) => !historyPage.entries.some((old) => old.id === row.id))] } : page;
+  historyLoaded = true;
+}
+function resetHistory() {
+  historyPage = { entries: [], nextCursor: null }; historyLoaded = false; historyScrollTop = 0;
+  const scroller = document.querySelector(".history-scroll"); if (scroller) scroller.scrollTop = 0;
+}
+async function reloadActivity() {
+  await load();
+  if (tab === "owed" && activityTab === "history") await loadHistory();
+}
+
+function historyView() {
+  let previousDay = "";
+  const rows = historyPage.entries.map((row) => {
+    const day = dayInZone(row.completedAt!, state.timezone);
+    const heading = day !== previousDay ? `<h2 class="history-day">${escape(day === relativeDay(state.timezone) ? "Today" : day === relativeDay(state.timezone, -1) ? "Yesterday" : shortDay(day))}</h2>` : "";
+    previousDay = day;
+    const person = state.players.find((player) => player.id === row.targetPlayerId);
+    const time = new Intl.DateTimeFormat("en-GB", { timeZone: state.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(row.completedAt!));
+    return `${heading}<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><span>${escape(person?.name ?? "Former player")}</span><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div><span class="history-check" aria-label="Completed">${icon("check")}</span></div></article>`;
+  }).join("");
+  return `<div class="history-filters"><div class="history-person select-wrap"><label class="sr-only" for="history-person">Filter by person</label><select id="history-person" ${busy ? "disabled" : ""}><option value="0">Everyone</option>${state.players.map((player) => `<option value="${player.id}" ${player.id === historyPlayer ? "selected" : ""}>${escape(player.name)}</option>`).join("")}</select>${icon("chevron")}</div><button class="history-date ${historyRange.mode !== "all" ? "filter-active" : ""}" data-action="history-dates" aria-label="Filter by date: ${escape(rangeLabel(historyRange))}" ${busy ? "disabled" : ""}>${icon("calendar")}<span>${escape(rangeLabel(historyRange))}</span></button></div>
+    ${historyPlayer || historyRange.mode !== "all" ? `<div class="history-filter-summary"><span>${escape(historyRange.mode === "custom" ? `${historyRange.from ? shortDay(historyRange.from) + (historyRange.withTimes ? ` ${historyRange.fromTime}` : "") : "Any start"} – ${historyRange.to ? shortDay(historyRange.to) + (historyRange.withTimes ? ` ${historyRange.toTime}` : "") : "Any end"}` : "Filtered history")}</span><button data-action="history-clear" ${busy ? "disabled" : ""}>Reset</button></div>` : ""}
+    <div class="history-scroll" aria-busy="${busy}">${!historyLoaded ? `<div class="history-empty" role="status">${error ? "Couldn’t load history. Tap refresh to retry." : "Loading history…"}</div>` : rows || `<div class="history-empty"><span class="empty-check">${icon("check")}</span><strong>${historyPlayer || historyRange.mode !== "all" ? "No matches" : "No completed exercises yet"}</strong><p>${historyPlayer || historyRange.mode !== "all" ? "Try another person or date." : "Completed exercises will appear here."}</p></div>`}${historyPage.nextCursor ? `<button class="history-more" data-action="history-more" ${busy ? "disabled" : ""}>${busy ? "Loading…" : "Load earlier"}</button>` : ""}</div>`;
+}
+
+function activityView() {
+  return `<section class="owed-page" aria-label="Activity"><header class="page-heading"><h1>Activity</h1><button class="icon-button" data-action="refresh" aria-label="Refresh ${activityTab === "history" ? "history" : "owed exercises"}" ${busy ? "disabled" : ""}>${icon("refresh")}</button></header><div class="activity-tabs" role="group" aria-label="Activity view"><button data-action="show-owed" aria-pressed="${activityTab === "owed"}" ${busy ? "disabled" : ""}>Owed</button><button data-action="show-history" aria-pressed="${activityTab === "history"}" ${busy ? "disabled" : ""}>History</button></div>${activityTab === "owed" ? owedView() : historyView()}</section>`;
+}
+
+function datesModal() {
+  const draft = rangeDraft!;
+  return `<div class="modal-backdrop" data-backdrop></div><dialog open aria-modal="true" aria-labelledby="dates-title" class="sheet"><header class="sheet-top"><div><h2 id="dates-title">Completed when?</h2><p>Times in ${escape(state.timezone)}</p></div><button class="icon-button" data-action="close-modal" aria-label="Cancel date filter">${icon("close")}</button></header><div class="sheet-scroll"><form id="history-dates" class="date-fields"><div class="date-presets" role="group" aria-label="Date shortcuts">${([['all', 'All dates'], ['today', 'Today'], ['yesterday', 'Yesterday']] as const).map(([mode, label]) => `<button type="button" data-action="date-preset" data-mode="${mode}" aria-pressed="${draft.mode === mode}">${label}</button>`).join("")}</div><div class="date-range-fields"><label>From<input id="history-from" type="date" value="${escape(draft.from)}"></label><label>To<input id="history-to" type="date" value="${escape(draft.to)}"></label></div><label class="time-toggle"><span>Include times</span><input id="history-times" type="checkbox" ${draft.withTimes ? "checked" : ""}></label>${draft.withTimes ? `<div class="date-range-fields"><label>Start time<input id="history-from-time" type="time" value="${escape(draft.fromTime)}" required></label><label>End time<input id="history-to-time" type="time" value="${escape(draft.toTime)}" required></label></div>` : ""}${error ? `<p class="entry-error" role="alert">${escape(error)}</p>` : ""}</form></div><footer class="sheet-footer"><button class="primary" type="submit" form="history-dates" ${busy ? "disabled" : ""}>${busy ? "Loading…" : "Apply filter"}</button></footer></dialog>`;
+}
+
 function rollView() {
   const exercise = roll ? exerciseOf(roll.exerciseKey) : result ? exerciseOf(result.exerciseKey) : null;
   const chosenFilters = roll?.injuryFilters ?? filters;
@@ -83,7 +130,7 @@ function rollView() {
 
 function owedView() {
   const players = state.players.filter((player) => player.active || player.owed.length);
-  return `<section class="owed-page" aria-label="Owed exercises"><header class="page-heading"><h1>Owed</h1><button class="icon-button" data-action="refresh" aria-label="Refresh owed exercises" ${busy ? "disabled" : ""}>${icon("refresh")}</button></header><div class="owed-scroll">${players.map((player) => `<section class="player-owed" aria-labelledby="player-${player.id}"><div class="owed-person-heading"><h2 id="player-${player.id}">${escape(player.name)}<span>${player.owed.length}</span></h2>${player.active ? `<button class="add-exercise-button" data-action="add-entry" data-target="${player.id}" aria-label="Add exercise for ${escape(player.name)}" ${busy ? "disabled" : ""}>+ Add</button>` : ""}</div>${player.owed.length ? `<ul class="owed-list">${player.owed.map((row) => `<li class="owed-item" data-assignment="${row.id}"><div class="owed-description"><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div><div class="owed-actions"><button class="dismiss-button" data-action="dismiss" data-assignment="${row.id}" aria-label="${row.entryType === "roll" ? "Undo roll" : "Remove exercise"}: ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" title="Remove exercise" ${busy ? "disabled" : ""}>${icon("undo")}</button><button class="complete-button" data-action="complete" data-target="${player.id}" data-assignment="${row.id}" aria-label="Complete ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" title="Complete" ${busy ? "disabled" : ""}>${icon("check")}</button></div></li>`).join("")}</ul>` : `<p class="all-done">${icon("check")} All done</p>`}</section>`).join("")}</div></section>`;
+  return `<div class="owed-scroll" aria-label="Owed exercises">${players.map((player) => `<section class="player-owed" aria-labelledby="player-${player.id}"><div class="owed-person-heading"><h2 id="player-${player.id}">${escape(player.name)}<span>${player.owed.length}</span></h2>${player.active ? `<button class="add-exercise-button" data-action="add-entry" data-target="${player.id}" aria-label="Add exercise for ${escape(player.name)}" ${busy ? "disabled" : ""}>+ Add</button>` : ""}</div>${player.owed.length ? `<ul class="owed-list">${player.owed.map((row) => `<li class="owed-item" data-assignment="${row.id}"><div class="owed-description"><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div><div class="owed-actions"><button class="dismiss-button" data-action="dismiss" data-assignment="${row.id}" aria-label="${row.entryType === "roll" ? "Undo roll" : "Remove exercise"}: ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" title="Remove exercise" ${busy ? "disabled" : ""}>${icon("undo")}</button><button class="complete-button" data-action="complete" data-target="${player.id}" data-assignment="${row.id}" aria-label="Complete ${escape(exerciseOf(row.exerciseKey).name)}, ${escape(amount(row))}, for ${escape(player.name)}" title="Complete" ${busy ? "disabled" : ""}>${icon("check")}</button></div></li>`).join("")}</ul>` : `<p class="all-done">${icon("check")} All done</p>`}</section>`).join("")}</div>`;
 }
 
 function dismissModal() {
@@ -107,12 +154,15 @@ function entryModal() {
 function render() {
   const scrollTop = document.querySelector(".owed-scroll")?.scrollTop ?? 0;
   const sheetScrollTop = document.querySelector(".sheet-scroll")?.scrollTop ?? 0;
+  historyScrollTop = document.querySelector(".history-scroll")?.scrollTop ?? historyScrollTop;
   const focused = document.activeElement as HTMLInputElement | null;
   const focusedFilter = modal && focused?.type === "checkbox" ? focused.value : null;
   const focusedId = focused?.id;
-  root.innerHTML = `${preview ? `<div class="preview-banner">Preview · sample data</div>` : ""}<main>${tab === "roll" ? rollView() : owedView()}</main><nav class="bottom-nav" aria-label="Game screens">${(["roll", "owed"] as const).map((name) => `<button data-action="${name}" aria-current="${tab === name ? "page" : "false"}" ${busy ? "disabled" : ""}>${icon(name === "roll" ? "dice" : "owed")}<span>${name === "roll" ? "Roll" : "Owed"}</span></button>`).join("")}</nav>${error && !modal ? `<div class="toast error-toast" role="alert"><span>${escape(error)}</span><button data-action="dismiss-error" aria-label="Dismiss error">${icon("close")}</button></div>` : notice ? `<div class="toast" role="status">${icon("check")}${escape(notice)}</div>` : ""}${modal === "injury" ? injuryModal() : modal === "dismiss" ? dismissModal() : modal === "entry" ? entryModal() : ""}`;
+  root.innerHTML = `${preview ? `<div class="preview-banner">Preview · sample data</div>` : ""}<main>${tab === "roll" ? rollView() : activityView()}</main><nav class="bottom-nav" aria-label="Game screens">${(["roll", "owed"] as const).map((name) => `<button data-action="${name}" aria-current="${tab === name ? "page" : "false"}" ${busy ? "disabled" : ""}>${icon(name === "roll" ? "dice" : "owed")}<span>${name === "roll" ? "Roll" : "Activity"}</span></button>`).join("")}</nav>${error && !modal ? `<div class="toast error-toast" role="alert"><span>${escape(error)}</span><button data-action="dismiss-error" aria-label="Dismiss error">${icon("close")}</button></div>` : notice ? `<div class="toast" role="status">${icon("check")}${escape(notice)}</div>` : ""}${modal === "injury" ? injuryModal() : modal === "dismiss" ? dismissModal() : modal === "entry" ? entryModal() : modal === "dates" ? datesModal() : ""}`;
   const scroller = document.querySelector(".owed-scroll");
   if (scroller) scroller.scrollTop = scrollTop;
+  const historyScroller = document.querySelector(".history-scroll");
+  if (historyScroller) historyScroller.scrollTop = historyScrollTop;
   const sheetScroller = document.querySelector(".sheet-scroll");
   if (sheetScroller) sheetScroller.scrollTop = sheetScrollTop;
   const stage = document.querySelector<HTMLElement>("#dice-stage");
@@ -135,7 +185,7 @@ function render() {
   if (modal) {
     const inputs = [...document.querySelectorAll<HTMLInputElement>("dialog input")];
     (inputs.find((input) => input.value === focusedFilter) ?? (focusedId ? document.getElementById(focusedId) : null) ?? document.querySelector<HTMLButtonElement>("dialog button"))?.focus();
-  }
+  } else if (focusedId === "history-person") document.getElementById(focusedId)?.focus({ preventScroll: true });
 }
 
 async function perform(work: () => Promise<void>) {
@@ -151,12 +201,25 @@ async function perform(work: () => Promise<void>) {
 
 function closeModal() {
   if (busy) return;
-  const selector = modal === "injury" ? '[data-action="injury"]' : modal === "entry" ? `[data-action="add-entry"][data-target="${entryDraft?.targetPlayerId}"]` : `[data-action="dismiss"][data-assignment="${dismissedId}"]`;
+  const selector = modal === "injury" ? '[data-action="injury"]' : modal === "entry" ? `[data-action="add-entry"][data-target="${entryDraft?.targetPlayerId}"]` : modal === "dates" ? '[data-action="history-dates"]' : `[data-action="dismiss"][data-assignment="${dismissedId}"]`;
+  if (modal === "dates") error = "";
   modal = null; render(); document.querySelector<HTMLButtonElement>(selector)?.focus();
 }
 
 root.addEventListener("change", (event) => {
   const input = event.target as HTMLInputElement;
+  if (busy) return;
+  if (input.id === "history-person") { historyPlayer = Number(input.value); resetHistory(); void perform(() => loadHistory()); return; }
+  if (modal === "dates" && rangeDraft) {
+    if (input.id === "history-times") {
+      rangeDraft.withTimes = input.checked; rangeDraft.mode = "custom";
+      rangeDraft.from ||= relativeDay(state.timezone); rangeDraft.to ||= rangeDraft.from; render();
+    }
+    if (input.id === "history-from") { rangeDraft.from = input.value; rangeDraft.mode = "custom"; render(); }
+    if (input.id === "history-to") { rangeDraft.to = input.value; rangeDraft.mode = "custom"; render(); }
+    if (input.id === "history-from-time") { rangeDraft.fromTime = input.value; rangeDraft.mode = "custom"; }
+    if (input.id === "history-to-time") { rangeDraft.toTime = input.value; rangeDraft.mode = "custom"; }
+  }
   if (input.id === "target") { targetId = Number(input.value); sessionStorage.setItem("dice-target", String(targetId)); filters = []; excludedExercises = []; result = null; render(); }
   if (input.type === "checkbox" && modal === "injury") {
     if (input.dataset.kind === "exercise") excludedExercises = input.checked ? [...new Set([...excludedExercises, input.value])] : excludedExercises.filter((item) => item !== input.value);
@@ -170,6 +233,16 @@ root.addEventListener("change", (event) => {
 });
 root.addEventListener("input", (event) => { const input = event.target as HTMLInputElement; if (input.id === "entry-amount" && entryDraft) entryDraft.amount = input.value; });
 root.addEventListener("submit", (event) => {
+  if ((event.target as HTMLElement).id === "history-dates") {
+    event.preventDefault(); if (busy || !rangeDraft) return;
+    const candidate = { ...rangeDraft };
+    void perform(async () => {
+      if (candidate.mode === "custom" && !candidate.from && !candidate.to) throw new Error("Choose a date, or select All dates.");
+      if (candidate.from && candidate.to && `${candidate.from}T${candidate.withTimes ? candidate.fromTime : "00:00"}` > `${candidate.to}T${candidate.withTimes ? candidate.toTime : "23:59"}`) throw new Error("The end must be on or after the start.");
+      const page = await api<HistoryPage>(`/api/history?${historyQuery(historyPlayer, candidate, state.timezone)}`);
+      resetHistory(); historyRange = candidate; historyPage = page; historyLoaded = true; modal = null; haptic();
+    }); return;
+  }
   if ((event.target as HTMLElement).id !== "manual-entry") return;
   event.preventDefault(); if (busy || !entryDraft) return;
   const draft = { ...entryDraft }; entryDraft.attempted = true;
@@ -185,8 +258,18 @@ root.addEventListener("click", async (event) => {
   const action = button.dataset.action!;
   if (action === "roll" || action === "owed") {
     clearTimeout(noticeTimer); tab = action; error = ""; notice = ""; haptic();
-    if (action === "owed") await perform(load); else render();
+    if (action === "owed") { activityTab = "owed"; await perform(load); } else render();
     return;
+  }
+  if (action === "show-owed") { activityTab = "owed"; render(); haptic(); return; }
+  if (action === "show-history") { activityTab = "history"; resetHistory(); await perform(() => loadHistory()); haptic(); return; }
+  if (action === "history-more") { await perform(() => loadHistory(true)); return; }
+  if (action === "history-clear") { historyPlayer = 0; historyRange = emptyRange(); resetHistory(); await perform(() => loadHistory()); return; }
+  if (action === "history-dates") { error = ""; notice = ""; rangeDraft = { ...historyRange }; modal = "dates"; render(); return; }
+  if (action === "date-preset" && rangeDraft) {
+    const mode = button.dataset.mode as "all" | "today" | "yesterday";
+    rangeDraft = { ...emptyRange(), mode, from: mode === "all" ? "" : relativeDay(state.timezone, mode === "yesterday" ? -1 : 0), to: mode === "all" ? "" : relativeDay(state.timezone, mode === "yesterday" ? -1 : 0) };
+    error = ""; render(); return;
   }
   if (action === "injury") { clearTimeout(noticeTimer); notice = ""; result = null; modal = "injury"; render(); return; }
   if (action === "toggle-exercises") { exercisePickerOpen = !exercisePickerOpen; render(); return; }
@@ -204,7 +287,7 @@ root.addEventListener("click", async (event) => {
   if (action === "activity") result = null;
   if (action === "do-dismiss") modal = null;
   await perform(async () => {
-    if (action === "refresh") { await load(); notice = "Up to date"; return; }
+    if (action === "refresh") { await reloadActivity(); notice = "Up to date"; return; }
     if (action === "activity") {
       requestId ||= crypto.randomUUID(); sessionStorage.setItem("dice-request", requestId);
       const response = await api<{ roll: Roll }>("/api/rolls", { id: requestId, targetPlayerId: targetId, injuryFilters: filters, exerciseExclusions: excludedExercises });
@@ -258,6 +341,6 @@ void boot();
 let lastRefresh = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state && !busy && !modal && Date.now() - lastRefresh > 10_000) {
-    lastRefresh = Date.now(); void load().then(render).catch(() => { /* Leave the current state available for a retry. */ });
+    lastRefresh = Date.now(); void reloadActivity().then(render).catch(() => { /* Leave the current state available for a retry. */ });
   }
 });

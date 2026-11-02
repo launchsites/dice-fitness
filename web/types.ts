@@ -4,6 +4,7 @@ type Serialize<T> = T extends Date ? string : T extends readonly (infer U)[] ? S
 export type State = Omit<Serialize<Awaited<ReturnType<typeof appState>>>, "injuries"> & { injuries: { key: string; name: string; detail: string; excludes: string[] }[] };
 export type Roll = NonNullable<State["pending"]>;
 export type Assignment = State["history"][number];
+export type HistoryPage = Serialize<Awaited<ReturnType<typeof import("../src/services/history-service.js")["completedHistory"]>>>;
 
 export type Insets = { top: number; bottom: number; left: number; right: number };
 export type WebApp = {

@@ -41,7 +41,7 @@ export async function appState(operator: Player) {
       }),
     };
   }));
-  return { me: { id: operator.id, name: operator.displayName }, players: playerState, exercises: EXERCISES, injuries: INJURY_FILTERS, history, pending: pending[0] ?? null, lastRoll: latest[0] ?? null };
+  return { me: { id: operator.id, name: operator.displayName }, timezone: env.timezone, players: playerState, exercises: EXERCISES, injuries: INJURY_FILTERS, history, pending: pending[0] ?? null, lastRoll: latest[0] ?? null };
 }
 
 export async function beginRoll(operator: Player, request: { id: string; targetPlayerId: number; injuryFilters: unknown; exerciseExclusions?: unknown }) {

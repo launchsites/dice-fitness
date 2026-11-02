@@ -226,4 +226,24 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     expect((await maintenance.debtSnapshot(1002, 1001)).fingerprint).toBe(fresh.fingerprint);
     await app.finishRoll(operator, pending.id);
   });
+  it("pages the combined completion timeline without losing tied timestamps, and filters by person/completion time", async () => {
+    const inserted = await database.pool.query("INSERT INTO assignments (group_id,target_player_id,operator_player_id,exercise_key,measurement,amount,dice_result,game_date,assigned_at,completed_at) SELECT $1, CASE WHEN n%2=0 THEN $2::int ELSE $3::int END,$2,'crunches','reps',20,1,'2026-07-01','2026-07-01T00:00:00Z','2026-07-03T12:00:00Z' FROM generate_series(1,60) n RETURNING id,target_player_id", [group, operator.id, target.id]);
+    const ignored = await database.pool.query("INSERT INTO assignments (group_id,target_player_id,operator_player_id,exercise_key,measurement,amount,dice_result,game_date,completed_at,undone_at) VALUES ($1,$2,$2,'crunches','reps',20,1,'2026-07-03','2026-07-03T12:00:00Z','2026-07-03T13:00:00Z'), ($1,$2,$2,'crunches','reps',20,1,'2026-07-03',NULL,NULL) RETURNING id", [group, operator.id]);
+    await database.pool.query("INSERT INTO assignments (group_id,target_player_id,operator_player_id,exercise_key,measurement,amount,dice_result,game_date,completed_at) VALUES (-7777,$1,$1,'crunches','reps',20,1,'2026-07-03','2026-07-03T12:00:00Z')", [target.id]);
+    const get = async (query: string) => { const response = await fetch(base + "/api/history?" + query, { headers: { Authorization: auth() } }); expect(response.status).toBe(200); return response.json(); };
+    const query = "from=2026-07-03&to=2026-07-03";
+    const first = await get(query); expect(first.entries).toHaveLength(50); expect(first.nextCursor).toBeTruthy();
+    const second = await get(query + "&cursor=" + encodeURIComponent(first.nextCursor));
+    expect(second.entries).toHaveLength(10); expect(second.nextCursor).toBeNull();
+    const ids = [...first.entries, ...second.entries].map((row: { id: number }) => row.id);
+    expect(ids).toEqual(inserted.rows.map((row) => row.id).sort((a, b) => b - a));
+    expect(ids.some((id) => ignored.rows.some((row) => row.id === id))).toBe(false);
+    const mine = await get(query + `&playerId=${target.id}`);
+    expect(mine.entries).toHaveLength(30); expect(mine.entries.every((row: { targetPlayerId: number }) => row.targetPlayerId === target.id)).toBe(true);
+    // 12:00 UTC is 13:00 London. Filter completion time, not the earlier assigned date.
+    expect((await get("from=2026-07-03T13:00&to=2026-07-03T13:00")).entries).toHaveLength(50);
+    expect((await get("from=2026-07-03T12:00&to=2026-07-03T12:59")).entries).toHaveLength(0);
+    expect((await fetch(base + "/api/history")).status).toBe(401);
+    for (const bad of ["playerId=999999", "from=invalid", "cursor=bad", "from=2026-07-04&to=2026-07-03"]) expect((await fetch(base + "/api/history?" + bad, { headers: { Authorization: auth() } })).status).toBe(400);
+  });
 });

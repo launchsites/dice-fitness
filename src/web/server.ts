@@ -9,6 +9,7 @@ import { AppError } from "./errors.js";
 import { addPlayer, getPlayer, type Player } from "../services/game-service.js";
 import { addManualAssignment, appState, beginRoll, completeAppAssignments, dismissAppAssignment, finishRoll, undoAppAssignment } from "../services/app-service.js";
 import { refreshLeaderboard } from "../services/projection-service.js";
+import { completedHistory } from "../services/history-service.js";
 
 const root = resolve("web-dist");
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -70,12 +71,14 @@ export function createAppServer(bot: Bot) {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors https://web.telegram.org https://*.telegram.org");
     try {
-      const pathname = new URL(req.url || "/", "http://localhost").pathname;
+      const url = new URL(req.url || "/", "http://localhost");
+      const pathname = url.pathname;
       if (pathname === "/health") { json(res, 200, { ok: true }); return; }
       if (pathname.startsWith("/api/")) {
         if (req.headers.origin && env.miniAppUrl && req.headers.origin !== new URL(env.miniAppUrl).origin && req.headers.origin !== "http://127.0.0.1:5173") throw new AppError(403, "Origin not allowed.");
         const operator = await authenticate(req);
         if (pathname === "/api/state" && req.method === "GET") { json(res, 200, await appState(operator)); return; }
+        if (pathname === "/api/history" && req.method === "GET") { json(res, 200, await completedHistory(url.searchParams)); return; }
         if (req.method !== "POST") throw new AppError(405, "Method not allowed.");
         const data = await body(req);
         if (pathname === "/api/rolls") {

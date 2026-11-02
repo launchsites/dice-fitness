@@ -18,6 +18,11 @@ let rangeDraft: HistoryRange | null = null;
 let historyPage: HistoryPage = { entries: [], nextCursor: null };
 let historyLoaded = false;
 let historyScrollTop = 0;
+let historyRevision = 0;
+let historyAppending = false;
+let historyAppendError = "";
+let historyAppendController: AbortController | null = null;
+let historyObserver: IntersectionObserver | null = null;
 let targetId = Number(sessionStorage.getItem("dice-target")) || 0;
 let filters: string[] = [];
 let excludedExercises: string[] = [];
@@ -51,13 +56,13 @@ const icon = (name: "dice" | "owed" | "check" | "chevron" | "close" | "refresh" 
   calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18"/>',
 }[name]}</svg>`;
 
-async function api<T>(path: string, body?: Record<string, unknown>): Promise<T> {
+async function api<T>(path: string, body?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   if (preview) return (await (await import("./demo.js")).demoRequest(path, body)) as T;
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     headers: { Authorization: `tma ${telegram?.initData || ""}`, ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(20_000),
+    signal: signal ?? AbortSignal.timeout(20_000),
   });
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || "Could not connect. Try again.");
@@ -72,38 +77,104 @@ async function load() {
   if (!roll) { requestId = null; sessionStorage.removeItem("dice-request"); }
 }
 
-async function loadHistory(append = false) {
-  const page = await api<HistoryPage>(`/api/history?${historyQuery(historyPlayer, historyRange, state.timezone, append ? historyPage.nextCursor : null)}`);
-  historyPage = append ? { ...page, entries: [...historyPage.entries, ...page.entries.filter((row) => !historyPage.entries.some((old) => old.id === row.id))] } : page;
+function cancelHistoryPaging() {
+  historyRevision++; historyAppendController?.abort(); historyAppendController = null;
+  historyAppending = false; historyAppendError = ""; historyObserver?.disconnect(); historyObserver = null;
+}
+async function loadHistory() {
+  cancelHistoryPaging(); const revision = historyRevision;
+  const page = await api<HistoryPage>(`/api/history?${historyQuery(historyPlayer, historyRange, state.timezone)}`);
+  if (revision !== historyRevision) return;
+  historyPage = page;
   historyLoaded = true;
 }
 function resetHistory() {
+  cancelHistoryPaging();
   historyPage = { entries: [], nextCursor: null }; historyLoaded = false; historyScrollTop = 0;
   const scroller = document.querySelector(".history-scroll"); if (scroller) scroller.scrollTop = 0;
+}
+
+function historyPagination() {
+  if (!historyPage.nextCursor) return "";
+  return `<div class="history-pagination" aria-live="polite">${historyAppendError ? `<span>Couldn’t load earlier entries.</span><button class="history-retry" data-action="history-retry">Retry</button>` : historyAppending ? `<span class="history-loading" role="status"><span class="loading-spinner" aria-hidden="true"></span>Loading earlier…</span>` : ""}</div>`;
+}
+function updateHistoryPagination() {
+  const scroller = document.querySelector<HTMLElement>(".history-scroll");
+  if (!scroller) return;
+  scroller.setAttribute("aria-busy", String(historyAppending || busy));
+  const footer = scroller.querySelector(".history-pagination");
+  if (footer) footer.outerHTML = historyPagination();
+}
+function observeHistoryPagination() {
+  historyObserver?.disconnect(); historyObserver = null;
+  const scroller = document.querySelector<HTMLElement>(".history-scroll"), sentinel = scroller?.querySelector(".history-pagination");
+  if (!scroller || !sentinel || !historyLoaded || historyAppending || historyAppendError || busy || modal || document.visibilityState === "hidden") return;
+  historyObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) void loadEarlierHistory();
+  }, { root: scroller, rootMargin: "0px 0px 650px 0px" });
+  historyObserver.observe(sentinel);
+}
+async function loadEarlierHistory() {
+  const cursor = historyPage.nextCursor;
+  if (!cursor || historyAppending || busy || modal || document.visibilityState === "hidden" || tab !== "owed" || activityTab !== "history") return;
+  const revision = historyRevision, controller = new AbortController();
+  historyAppendController = controller; historyAppending = true; historyAppendError = "";
+  historyObserver?.disconnect(); updateHistoryPagination();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const page = await api<HistoryPage>(`/api/history?${historyQuery(historyPlayer, historyRange, state.timezone, cursor)}`, undefined, controller.signal);
+    if (revision !== historyRevision) return;
+    if (page.nextCursor === cursor) throw new Error("History cursor did not advance.");
+    const ids = new Set(historyPage.entries.map((row) => row.id));
+    const fresh = page.entries.filter((row) => !ids.has(row.id));
+    historyPage = { ...page, entries: [...historyPage.entries, ...fresh] };
+    const scroller = document.querySelector<HTMLElement>(".history-scroll");
+    if (scroller) {
+      // Keep the live scroll container and existing cards, including native swipe momentum.
+      for (const [day, entries] of historyDays(fresh)) {
+        const group = scroller.querySelector(`.history-day-group[data-day="${day}"]`);
+        if (group) group.insertAdjacentHTML("beforeend", entries.map(historyCard).join(""));
+        else scroller.querySelector(".history-pagination")?.insertAdjacentHTML("beforebegin", historyDayGroup(day, entries));
+      }
+      hydrateAvatars(root, telegram?.initData ?? "", preview);
+    }
+  } catch {
+    if (revision === historyRevision) historyAppendError = "retry";
+  } finally {
+    clearTimeout(timeout);
+    if (revision === historyRevision) {
+      historyAppendController = null; historyAppending = false;
+      updateHistoryPagination(); observeHistoryPagination();
+    }
+  }
 }
 async function reloadActivity() {
   await load();
   if (tab === "owed" && activityTab === "history") await loadHistory();
 }
 
-function historyView() {
+function historyDays(rows: Assignment[]) {
   const days = new Map<string, Assignment[]>();
-  for (const row of historyPage.entries) {
+  for (const row of rows) {
     const day = dayInZone(row.completedAt!, state.timezone);
     const entries = days.get(day) ?? []; entries.push(row); days.set(day, entries);
   }
-  const rows = [...days].map(([day, entries]) => {
-    const title = day === relativeDay(state.timezone) ? "Today" : day === relativeDay(state.timezone, -1) ? "Yesterday" : shortDay(day);
-    const cards = entries.map((row) => {
-      const person = state.players.find((player) => player.id === row.targetPlayerId), name = person?.name ?? "Former player";
-      const time = new Intl.DateTimeFormat("en-GB", { timeZone: state.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(row.completedAt!));
-      return `<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><div class="history-person-name">${avatarMarkup(row.targetPlayerId, name)}<span>${escape(name)}</span></div><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div></div></article>`;
-    }).join("");
-    return `<section class="history-day-group" aria-labelledby="day-${day}" data-day="${day}"><h2 class="history-day" id="day-${day}"><span>${escape(title)}</span></h2>${cards}</section>`;
-  }).join("");
+  return days;
+}
+function historyCard(row: Assignment) {
+  const person = state.players.find((player) => player.id === row.targetPlayerId), name = person?.name ?? "Former player";
+  const time = new Intl.DateTimeFormat("en-GB", { timeZone: state.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(row.completedAt!));
+  return `<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><div class="history-person-name">${avatarMarkup(row.targetPlayerId, name)}<span>${escape(name)}</span></div><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div></div></article>`;
+}
+function historyDayGroup(day: string, entries: Assignment[]) {
+  const title = day === relativeDay(state.timezone) ? "Today" : day === relativeDay(state.timezone, -1) ? "Yesterday" : shortDay(day);
+  return `<section class="history-day-group" aria-labelledby="day-${day}" data-day="${day}"><h2 class="history-day" id="day-${day}"><span>${escape(title)}</span></h2>${entries.map(historyCard).join("")}</section>`;
+}
+function historyView() {
+  const rows = [...historyDays(historyPage.entries)].map(([day, entries]) => historyDayGroup(day, entries)).join("");
   return `<div class="history-filters"><div class="history-person select-wrap"><label class="sr-only" for="history-person">Filter by person</label><select id="history-person" ${busy ? "disabled" : ""}><option value="0">Everyone</option>${state.players.map((player) => `<option value="${player.id}" ${player.id === historyPlayer ? "selected" : ""}>${escape(player.name)}</option>`).join("")}</select>${icon("chevron")}</div><button class="history-date ${historyRange.mode !== "all" ? "filter-active" : ""}" data-action="history-dates" aria-label="Filter by date: ${escape(rangeLabel(historyRange))}" ${busy ? "disabled" : ""}>${icon("calendar")}<span>${escape(rangeLabel(historyRange))}</span></button></div>
     ${historyPlayer || historyRange.mode !== "all" ? `<div class="history-filter-summary"><span>${escape(historyRange.mode === "custom" ? `${historyRange.from ? shortDay(historyRange.from) + (historyRange.withTimes ? ` ${historyRange.fromTime}` : "") : "Any start"} – ${historyRange.to ? shortDay(historyRange.to) + (historyRange.withTimes ? ` ${historyRange.toTime}` : "") : "Any end"}` : "Filtered history")}</span><button data-action="history-clear" ${busy ? "disabled" : ""}>Reset</button></div>` : ""}
-    <div class="history-scroll" aria-busy="${busy}">${!historyLoaded ? `<div class="history-empty" role="status">${error ? "Couldn’t load history. Tap refresh to retry." : "Loading history…"}</div>` : rows || `<div class="history-empty"><span class="empty-check">${icon("check")}</span><strong>${historyPlayer || historyRange.mode !== "all" ? "No matches" : "No completed exercises yet"}</strong><p>${historyPlayer || historyRange.mode !== "all" ? "Try another person or date." : "Completed exercises will appear here."}</p></div>`}${historyPage.nextCursor ? `<button class="history-more" data-action="history-more" ${busy ? "disabled" : ""}>${busy ? "Loading…" : "Load earlier"}</button>` : ""}</div>`;
+    <div class="history-scroll" aria-busy="${busy || historyAppending}">${!historyLoaded ? `<div class="history-empty" role="status">${error ? "Couldn’t load history. Tap refresh to retry." : "Loading history…"}</div>` : rows || `<div class="history-empty"><span class="empty-check">${icon("check")}</span><strong>${historyPlayer || historyRange.mode !== "all" ? "No matches" : "No completed exercises yet"}</strong><p>${historyPlayer || historyRange.mode !== "all" ? "Try another person or date." : "Completed exercises will appear here."}</p></div>`}${historyPagination()}</div>`;
 }
 
 function activityView() {
@@ -193,6 +264,7 @@ function render() {
     (inputs.find((input) => input.value === focusedFilter) ?? (focusedId ? document.getElementById(focusedId) : null) ?? document.querySelector<HTMLButtonElement>("dialog button"))?.focus();
   } else if (focusedId === "history-person") document.getElementById(focusedId)?.focus({ preventScroll: true });
   hydrateAvatars(root, telegram?.initData ?? "", preview);
+  observeHistoryPagination();
 }
 
 async function perform(work: () => Promise<void>) {
@@ -202,7 +274,7 @@ async function perform(work: () => Promise<void>) {
   catch (err) { error = err instanceof Error ? err.message : "Connection interrupted. Try again."; telegram?.HapticFeedback?.notificationOccurred("error"); }
   finally {
     busy = false; render();
-    if (notice) noticeTimer = setTimeout(() => { if (notice) { notice = ""; render(); } }, 2200);
+    if (notice) noticeTimer = setTimeout(() => { if (notice) { notice = ""; document.querySelector('.toast[role="status"]')?.remove(); } }, 2200);
   }
 }
 
@@ -264,15 +336,16 @@ root.addEventListener("click", async (event) => {
   if (!button || button.disabled || busy) return;
   const action = button.dataset.action!;
   if (action === "roll" || action === "owed") {
+    cancelHistoryPaging();
     clearTimeout(noticeTimer); tab = action; error = ""; notice = ""; haptic();
     if (action === "owed") { activityTab = "owed"; await perform(load); } else render();
     return;
   }
-  if (action === "show-owed") { activityTab = "owed"; render(); haptic(); return; }
+  if (action === "show-owed") { cancelHistoryPaging(); activityTab = "owed"; render(); haptic(); return; }
   if (action === "show-history") { activityTab = "history"; resetHistory(); await perform(() => loadHistory()); haptic(); return; }
-  if (action === "history-more") { await perform(() => loadHistory(true)); return; }
+  if (action === "history-retry") { await loadEarlierHistory(); return; }
   if (action === "history-clear") { historyPlayer = 0; historyRange = emptyRange(); resetHistory(); await perform(() => loadHistory()); return; }
-  if (action === "history-dates") { error = ""; notice = ""; rangeDraft = { ...historyRange }; modal = "dates"; render(); return; }
+  if (action === "history-dates") { cancelHistoryPaging(); error = ""; notice = ""; rangeDraft = { ...historyRange }; modal = "dates"; render(); return; }
   if (action === "date-preset" && rangeDraft) {
     const mode = button.dataset.mode as "all" | "today" | "yesterday";
     rangeDraft = { ...emptyRange(), mode, from: mode === "all" ? "" : relativeDay(state.timezone, mode === "yesterday" ? -1 : 0), to: mode === "all" ? "" : relativeDay(state.timezone, mode === "yesterday" ? -1 : 0) };
@@ -348,6 +421,8 @@ void boot();
 let lastRefresh = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state && !busy && !modal && Date.now() - lastRefresh > 10_000) {
+    // Returning to a scrolled timeline must not replace its earlier pages with page one.
+    if (tab === "owed" && activityTab === "history" && (document.querySelector(".history-scroll")?.scrollTop ?? 0) > 0) { observeHistoryPagination(); return; }
     lastRefresh = Date.now(); void reloadActivity().then(render).catch(() => { /* Leave the current state available for a retry. */ });
   }
 });

@@ -107,7 +107,11 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .history-item-main > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .history-item strong { font-size: 16px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere; }
 .history-item-main > div > span { font-size: 14px; color: var(--blue); }
-.history-more { width: 100%; min-height: 48px; color: var(--blue); background: var(--surface); border-radius: 10px; margin-top: 8px; font-size: 14px; }
+.history-pagination { min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; color: var(--muted); font-size: 13px; line-height: 20px; overflow-anchor: none; }
+.history-loading { display: inline-flex; align-items: center; gap: 9px; }
+.loading-spinner { width: 16px; height: 16px; border: 2px solid #30495f; border-top-color: var(--blue); border-radius: 50%; animation: loading-spin .8s linear infinite; }
+.history-retry { min-height: 44px; border-radius: 10px; padding: 8px 14px; color: var(--blue); background: var(--surface); font-size: 14px; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 .history-empty { min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; color: var(--muted); font-size: 14px; }
 .history-empty strong { color: #f3f5f7; font-size: 16px; font-weight: 500; }
 .history-empty p { line-height: 20px; }

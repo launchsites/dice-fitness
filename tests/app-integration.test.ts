@@ -282,4 +282,21 @@ describe.skipIf(!connection)("Mini App PostgreSQL integration", () => {
     expect((await database.pool.query("SELECT * FROM assignments ORDER BY id")).rows).toEqual(before);
     expect((await fetch(base + `/api/players/${target.id}/avatar`, { method: "POST", headers: { Authorization: auth(), "Content-Type": "application/json" }, body: "{}" })).status).toBe(404);
   });
+  it("accepts a bounded private image upload only from a signed group-admin session", async () => {
+    const path = base + `/api/players/${target.id}/avatar`;
+    const before = (await database.pool.query("SELECT * FROM assignments ORDER BY id")).rows;
+    const put = (image: Buffer, authorization?: string, type = "image/png", url = path) => fetch(url, { method: "PUT", headers: { "Content-Type": type, ...(authorization ? { Authorization: authorization } : {}) }, body: image });
+    expect((await put(avatarPng)).status).toBe(401);
+    expect((await put(avatarPng, auth(1002))).status).toBe(403);
+    expect((await put(avatarPng, auth(9999))).status).toBe(403);
+    expect((await put(avatarPng, auth(), "image/svg+xml")).status).toBe(415);
+    expect((await put(Buffer.from("not an image"), auth())).status).toBe(400);
+    expect((await put(Buffer.alloc(1048577), auth())).status).toBe(413);
+    expect((await put(avatarPng, auth(), "image/png", base + "/api/players/999999/avatar")).status).toBe(404);
+    const result = await put(avatarPng, auth());
+    expect(result.status).toBe(200); expect(await result.json()).toEqual({ ok: true, player: target.displayName, override: true });
+    const read = await fetch(path, { headers: { Authorization: auth() } });
+    expect(Buffer.from(await read.arrayBuffer())).toEqual(avatarPng);
+    expect((await database.pool.query("SELECT * FROM assignments ORDER BY id")).rows).toEqual(before);
+  });
 });

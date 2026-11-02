@@ -6,11 +6,11 @@ import { env } from "../config/env.js";
 import { logger } from "../logger.js";
 import { verifyInitData } from "./auth.js";
 import { AppError } from "./errors.js";
-import { addPlayer, getPlayer, type Player } from "../services/game-service.js";
+import { addPlayer, getPlayer, listPlayers, type Player } from "../services/game-service.js";
 import { addManualAssignment, appState, beginRoll, completeAppAssignments, dismissAppAssignment, finishRoll, undoAppAssignment } from "../services/app-service.js";
 import { refreshLeaderboard } from "../services/projection-service.js";
 import { completedHistory } from "../services/history-service.js";
-import { avatarReader } from "../services/avatar-service.js";
+import { avatarReader, setPlayerAvatar } from "../services/avatar-service.js";
 
 const root = resolve("web-dist");
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -89,6 +89,22 @@ export function createAppServer(bot: Bot, options: { avatarDownload?: typeof fet
           if (!photo) throw new AppError(404, "No profile photo available.");
           res.writeHead(200, { "Content-Type": photo.mime, "Content-Length": photo.image.length, "Cache-Control": "private, no-store", Vary: "Authorization" });
           res.end(photo.image); return;
+        }
+        if (avatar && req.method === "PUT") {
+          limit(`avatar-upload:${operator.id}`, 10);
+          const member = await bot.api.getChatMember(env.gameChatId, operator.telegramUserId);
+          if (member.status !== "administrator" && member.status !== "creator") throw new AppError(403, "Only a group admin can set profile overrides.");
+          if (!["image/jpeg", "image/png", "image/webp"].includes(req.headers["content-type"] ?? "")) throw new AppError(415, "Send a JPEG, PNG or WebP image.");
+          const target = (await listPlayers(env.gameChatId, false)).find((player) => player.id === Number(avatar[1]));
+          if (!target) throw new AppError(404, "Player not found.");
+          const chunks: Buffer[] = []; let size = 0;
+          for await (const chunk of req) {
+            const bytes = Buffer.from(chunk); size += bytes.length;
+            if (size > 1024 * 1024) throw new AppError(413, "Use a profile image smaller than 1 MB.");
+            chunks.push(bytes);
+          }
+          const result = await setPlayerAvatar(bot.api, target.telegramUserId, operator.telegramUserId, Buffer.concat(chunks));
+          json(res, 200, { ok: true, ...result }); return;
         }
         if (req.method !== "POST") throw new AppError(405, "Method not allowed.");
         const data = await body(req);

@@ -97,7 +97,7 @@ function historyView() {
     const cards = entries.map((row) => {
       const person = state.players.find((player) => player.id === row.targetPlayerId), name = person?.name ?? "Former player";
       const time = new Intl.DateTimeFormat("en-GB", { timeZone: state.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(row.completedAt!));
-      return `<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><div class="history-person-name">${avatarMarkup(row.targetPlayerId, name)}<span>${escape(name)}</span></div><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div><span class="history-check" aria-label="Completed">${icon("check")}</span></div></article>`;
+      return `<article class="history-item" data-assignment="${row.id}"><div class="history-item-top"><div class="history-person-name">${avatarMarkup(row.targetPlayerId, name)}<span>${escape(name)}</span></div><time datetime="${escape(row.completedAt)}">${time}</time></div><div class="history-item-main"><div><strong>${escape(exerciseOf(row.exerciseKey).name)}</strong><span>${escape(amount(row))}${row.entryType === "manual" ? " · Added manually" : ""}</span></div></div></article>`;
     }).join("");
     return `<section class="history-day-group" aria-labelledby="day-${day}" data-day="${day}"><h2 class="history-day" id="day-${day}"><span>${escape(title)}</span></h2>${cards}</section>`;
   }).join("");
@@ -107,7 +107,7 @@ function historyView() {
 }
 
 function activityView() {
-  return `<section class="owed-page" aria-label="Activity"><header class="page-heading"><h1>Activity</h1><button class="icon-button" data-action="refresh" aria-label="Refresh ${activityTab === "history" ? "history" : "owed exercises"}" ${busy ? "disabled" : ""}>${icon("refresh")}</button></header><div class="activity-tabs" role="group" aria-label="Activity view"><button data-action="show-owed" aria-pressed="${activityTab === "owed"}" ${busy ? "disabled" : ""}>Owed</button><button data-action="show-history" aria-pressed="${activityTab === "history"}" ${busy ? "disabled" : ""}>History</button></div>${activityTab === "owed" ? owedView() : historyView()}</section>`;
+  return `<section class="owed-page" aria-label="Activity"><header class="activity-toolbar"><div class="activity-tabs" role="group" aria-label="Activity view"><button data-action="show-owed" aria-pressed="${activityTab === "owed"}" ${busy ? "disabled" : ""}>Owed</button><button data-action="show-history" aria-pressed="${activityTab === "history"}" ${busy ? "disabled" : ""}>History</button></div><button class="icon-button" data-action="refresh" aria-label="Refresh ${activityTab === "history" ? "history" : "owed exercises"}" ${busy ? "disabled" : ""}>${icon("refresh")}</button></header>${activityTab === "owed" ? owedView() : historyView()}</section>`;
 }
 
 function datesModal() {
